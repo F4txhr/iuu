@@ -11,20 +11,11 @@ function toast(msg) {
 
 // Terminal output
 socket.on('terminal_output', d => term.write(d));
-
-// Input form
-const inputForm = document.getElementById('input-form');
-const input = document.getElementById('terminal-input');
-inputForm.onsubmit = e => {
-  e.preventDefault();
-  if(input.value.trim()==="") return;
-  socket.emit('terminal_input', input.value+'\n');
-  input.value="";
-};
+term.onData(d => socket.emit('terminal_input', d));
+term.focus();
 
 // Shortcuts
 document.addEventListener('keydown', e=>{
-  if(e.ctrlKey && e.key==="e"){ input.focus(); e.preventDefault(); }
   if(e.ctrlKey && e.key==="l"){ socket.emit('terminal_clear'); e.preventDefault(); }
   if(e.key==="Escape"){
     document.getElementById("file-explorer").classList.add("collapsed");
@@ -42,7 +33,8 @@ feToggle.onclick = ()=> fileExplorer.classList.toggle("collapsed");
 
 // List directory
 function listDir(path){
-  fetch(`/api/list?path=${encodeURIComponent(path)}`)
+  const url = path ? `/api/list?path=${encodeURIComponent(path)}` : '/api/list';
+  fetch(url)
     .then(r=>r.json())
     .then(res=>{
       if(res.error){ toast(res.error); return; }
@@ -80,7 +72,7 @@ function listDir(path){
       });
     });
 }
-listDir("/data/data/com.termux/files/home"); // Load home
+listDir(); // Load home
 
 // Preview file
 function previewFile(path, meta){
