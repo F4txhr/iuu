@@ -1,6 +1,6 @@
 from flask import Flask, request, jsonify, send_from_directory, send_file
 from flask_socketio import SocketIO, emit
-import os, pty, select, threading, base64
+import os, pty, select, threading, base64, shutil
 
 app = Flask(__name__, static_url_path='/static')
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
@@ -87,6 +87,66 @@ def set_cwd():
         cwd[0] = path
         return jsonify({"ok":True,"cwd":cwd[0]})
     return jsonify({"ok":False})
+
+# API: create directory
+@app.route('/api/create-dir', methods=['POST'])
+def create_dir():
+    data = request.json
+    path = data.get('path')
+    name = data.get('name')
+    if not path or not name:
+        return jsonify({"error": "Path and name are required"}), 400
+    try:
+        os.mkdir(os.path.join(path, name))
+        return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+# API: create file
+@app.route('/api/create-file', methods=['POST'])
+def create_file():
+    data = request.json
+    path = data.get('path')
+    name = data.get('name')
+    if not path or not name:
+        return jsonify({"error": "Path and name are required"}), 400
+    try:
+        open(os.path.join(path, name), 'a').close()
+        return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+# API: rename
+@app.route('/api/rename', methods=['POST'])
+def rename_item():
+    data = request.json
+    old_path = data.get('old_path')
+    new_name = data.get('new_name')
+    if not old_path or not new_name:
+        return jsonify({"error": "Old path and new name are required"}), 400
+    try:
+        dir_path = os.path.dirname(old_path)
+        new_path = os.path.join(dir_path, new_name)
+        os.rename(old_path, new_path)
+        return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+# API: delete
+@app.route('/api/delete', methods=['POST'])
+def delete_item():
+    data = request.json
+    path = data.get('path')
+    if not path:
+        return jsonify({"error": "Path is required"}), 400
+    try:
+        if os.path.isdir(path):
+            shutil.rmtree(path)
+        else:
+            os.remove(path)
+        return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
 
 # Terminal PTY
 master, slave = pty.openpty()

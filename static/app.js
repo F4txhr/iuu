@@ -27,9 +27,46 @@ document.addEventListener('keydown', e=>{
 const fileExplorer = document.getElementById("file-explorer");
 const fileList = document.getElementById("file-list");
 const cwdDiv = document.getElementById("cwd");
+const contextMenu = document.getElementById("context-menu");
+let contextTarget = null; // will store path for context menu
 // FE toggle button (floating, di luar explorer)
 const feToggle = document.getElementById("fe-toggle");
 feToggle.onclick = ()=> fileExplorer.classList.toggle("collapsed");
+
+// Hide context menu on global click
+document.addEventListener('click', ()=>contextMenu.style.display="none");
+
+// Context menu actions
+contextMenu.addEventListener('click', e => {
+  if(!contextTarget || !e.target.matches('[data-action]')) return;
+  const action = e.target.dataset.action;
+  const { path } = contextTarget;
+
+  switch(action){
+    case 'delete':
+      if(!confirm(`Are you sure you want to delete ${path}?`)) return;
+      fetch('/api/delete',{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({path:path})})
+        .then(r=>r.json()).then(res=>{
+          if(res.ok) listDir(cwd); else toast(res.error||"Gagal menghapus");
+        });
+      break;
+    case 'rename':
+      const newName = prompt(`Enter new name for ${path}:`, path.split('/').pop());
+      if(!newName) return;
+      fetch('/api/rename',{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({old_path:path, new_name:newName})})
+        .then(r=>r.json()).then(res=>{
+          if(res.ok) listDir(cwd); else toast(res.error||"Gagal rename");
+        });
+      break;
+    case 'download':
+      window.open(`/api/download?path=${encodeURIComponent(path)}`);
+      break;
+    case 'run':
+      const cmd = path.endsWith('.py') ? 'python' : 'bash';
+      socket.emit('terminal_input', `${cmd} "${path}"\n`);
+      break;
+  }
+});
 
 // List directory
 function listDir(path){
@@ -53,21 +90,28 @@ function listDir(path){
       res.items.forEach(f=>{
         const el = document.createElement("div");
         el.className = f.is_dir ? "fe-folder" : "fe-file";
-        el.innerHTML = f.is_dir ? "📁 "+f.name : "📄 "+f.name;
-        if(f.is_dir){
-          el.onclick = ()=>listDir(cwd.replace(/\/+$/,"")+"/"+f.name);
-        }else{
-          el.onclick = ()=>previewFile(cwd.replace(/\/+$/,"")+"/"+f.name, f);
-          // Download icon
-          const dl = document.createElement("button");
-          dl.textContent = "⬇️"; dl.title="Download";
-          dl.style.marginLeft="auto";
-          dl.onclick = ev => {
-            ev.stopPropagation();
-            window.open(`/api/download?path=${encodeURIComponent(cwd.replace(/\/+$/,"")+"/"+f.name)}`);
-          };
-          el.appendChild(dl);
-        }
+        const fullPath = cwd.replace(/\/+$/,"")+"/"+f.name;
+
+        const text = document.createElement('span');
+        text.textContent = f.is_dir ? "📁 "+f.name : "📄 "+f.name;
+        text.onclick = f.is_dir ? ()=>listDir(fullPath) : ()=>previewFile(fullPath, f);
+        el.appendChild(text);
+
+        const menuBtn = document.createElement("button");
+        menuBtn.textContent = "…";
+        menuBtn.className = "ctx-menu-btn";
+        menuBtn.onclick = e => {
+          e.stopPropagation();
+          contextTarget = { path: fullPath, is_dir: f.is_dir, is_txt: f.is_txt };
+          contextMenu.style.display="flex";
+          contextMenu.style.top = `${e.target.offsetTop + 20}px`;
+          contextMenu.style.left = `${e.target.offsetLeft - 50}px`;
+          // Hide/show run button
+          document.querySelector('[data-action="run"]').style.display = (f.is_txt && (f.name.endsWith(".py") || f.name.endsWith(".sh"))) ? 'block' : 'none';
+          document.querySelector('[data-action="download"]').style.display = f.is_dir ? 'none' : 'block';
+        };
+        el.appendChild(menuBtn);
+
         fileList.appendChild(el);
       });
     });
@@ -131,6 +175,28 @@ document.getElementById("fe-goto").onclick = ()=>{
     .then(res=>{
       if(res.ok){ listDir(p); toast("Pindah directory!"); }
       else toast("Path tidak valid");
+    });
+};
+
+// New File/Folder
+document.getElementById("fe-new-file").onclick = ()=>{
+  const name = prompt("Enter new file name:");
+  if(!name) return;
+  fetch('/api/create-file',{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({path:cwd, name:name})})
+    .then(r=>r.json())
+    .then(res=>{
+      if(res.ok) listDir(cwd);
+      else toast(res.error || "Gagal membuat file");
+    });
+};
+document.getElementById("fe-new-dir").onclick = ()=>{
+  const name = prompt("Enter new folder name:");
+  if(!name) return;
+  fetch('/api/create-dir',{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({path:cwd, name:name})})
+    .then(r=>r.json())
+    .then(res=>{
+      if(res.ok) listDir(cwd);
+      else toast(res.error || "Gagal membuat folder");
     });
 };
 
