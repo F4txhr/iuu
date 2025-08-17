@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Termux Web Terminal</title>
+  <link rel="stylesheet" href="./static/xterm.css">
+  <link rel="stylesheet" href="./static/style.css">
+</head>
+<body>
+  <!-- Floating button always visible -->
+  <button id="fe-toggle" class="fe-float">☰</button>
+  <div id="file-explorer" class="collapsed">
+    <div id="fe-header">
+      <input id="custom-path" placeholder="Custom path" />
+      <button id="fe-goto">Go</button>
+    </div>
+    <div id="cwd"></div>
+    <div id="file-list"></div>
+    <input type="file" id="fe-upload" style="display:none" multiple>
+    <button id="fe-upload-btn">Upload</button>
+  </div>
+  <div id="preview-modal" style="display:none;">
+    <div id="preview-content"></div>
+    <button id="preview-close">×</button>
+  </div>
+  <div id="terminal"></div>
+  <form id="input-form" autocomplete="off">
+    <input id="terminal-input" autofocus autocomplete="off" spellcheck="false" placeholder="Ketik perintah di sini... (Ctrl+E fokus ke input)">
+    <button type="submit">"</button>
+  </form>
+  <div id="toast"></div>
+  <script src="./static/xterm.js"></script>
+  <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+  <script src="./static/app.js"></script>
+</body>
+</html>
