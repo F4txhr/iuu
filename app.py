@@ -533,7 +533,8 @@ def terminal_close(payload):
 
 
 # HTTP fallback endpoints for terminal
-@app.route('/api/term/new', methods=['POST'])
+@app.route('/api/term/new', methods=['POST', 'GET'])
+@app.route('/api/term/new/', methods=['POST', 'GET'])
 def http_term_new():
     cid = request.args.get('cid', 'http')
     try:
@@ -543,12 +544,13 @@ def http_term_new():
         return jsonify({ 'error': f'Failed to start terminal: {e}' }), 500
 
 
-@app.route('/api/term/input', methods=['POST'])
+@app.route('/api/term/input', methods=['POST', 'GET'])
+@app.route('/api/term/input/', methods=['POST', 'GET'])
 def http_term_input():
-    data = request.json or {}
     cid = request.args.get('cid', 'http')
-    tid = data.get('tid')
-    inp = data.get('data', '')
+    data = request.json if request.is_json else None
+    tid = request.args.get('tid') or (data.get('tid') if data else None)
+    inp = request.args.get('data') or (data.get('data') if data else '')
     term = _get_term(cid, tid)
     if not term:
         return jsonify({ 'error': 'No such terminal' }), 404
@@ -556,11 +558,12 @@ def http_term_input():
     return jsonify({ 'ok': True })
 
 
-@app.route('/api/term/clear', methods=['POST'])
+@app.route('/api/term/clear', methods=['POST', 'GET'])
+@app.route('/api/term/clear/', methods=['POST', 'GET'])
 def http_term_clear():
-    data = request.json or {}
     cid = request.args.get('cid', 'http')
-    tid = data.get('tid')
+    data = request.json if request.is_json else None
+    tid = request.args.get('tid') or (data.get('tid') if data else None)
     term = _get_term(cid, tid)
     if not term:
         return jsonify({ 'error': 'No such terminal' }), 404
@@ -568,16 +571,20 @@ def http_term_clear():
     return jsonify({ 'ok': True })
 
 
-@app.route('/api/term/close', methods=['POST'])
+@app.route('/api/term/close', methods=['POST', 'GET'])
+@app.route('/api/term/close/', methods=['POST', 'GET'])
 def http_term_close():
-    data = request.json or {}
     cid = request.args.get('cid', 'http')
-    tid = data.get('tid')
-    _stop_terminal(cid, tid)
-    return jsonify({ 'ok': True })
+    data = request.json if request.is_json else None
+    tid = request.args.get('tid') or (data.get('tid') if data else None)
+    if tid:
+        _stop_terminal(cid, tid)
+        return jsonify({ 'ok': True })
+    return jsonify({ 'error': 'Missing tid' }), 400
 
 
-@app.route('/api/term/poll')
+@app.route('/api/term/poll', methods=['GET'])
+@app.route('/api/term/poll/', methods=['GET'])
 def http_term_poll():
     cid = request.args.get('cid', 'http')
     tid = request.args.get('tid')
