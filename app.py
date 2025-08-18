@@ -1,7 +1,7 @@
 from flask import Flask, request, jsonify, send_from_directory, send_file
 from flask_socketio import SocketIO, emit
 from werkzeug.utils import secure_filename
-import os, pty, select, threading, base64, shutil, signal, subprocess
+import os, pty, select, threading, base64, shutil, signal, subprocess, traceback
 from datetime import datetime
 
 app = Flask(__name__, static_url_path='/static')
@@ -20,10 +20,11 @@ PTY_SESSIONS = {}
 SESSIONS_LOCK = threading.Lock()
 
 
-def _detect_shell_path() -> list:
+def _detect_shell_cmd() -> list:
+    # Prefer SHELL
     sh = os.environ.get('SHELL')
     if sh and os.path.exists(sh):
-        return [sh, sh]
+        return [sh, '-i']
     candidates = [
         '/data/data/com.termux/files/usr/bin/zsh',
         '/data/data/com.termux/files/usr/bin/bash',
@@ -34,8 +35,8 @@ def _detect_shell_path() -> list:
     ]
     for c in candidates:
         if os.path.exists(c):
-            return [c, c]
-    return ['sh', 'sh']
+            return [c, '-i']
+    return ['sh', '-i']
 
 
 def _is_within_root(path: str) -> bool:
@@ -387,10 +388,10 @@ def _start_pty_fork(sid: str, tid: str):
             os.chdir(ROOT_PATH)
         except Exception:
             os.chdir(START_PATH)
-        shell_path, shell_name = _detect_shell_path()
         os.environ.setdefault('TERM', 'xterm-256color')
         os.environ.setdefault('HOME', ROOT_PATH)
-        os.execv(shell_path, [shell_name])
+        cmd = _detect_shell_cmd()
+        os.execv(cmd[0], cmd)
     else:
         return pid, fd
 
@@ -398,22 +399,19 @@ def _start_pty_fork(sid: str, tid: str):
 def _start_pty_openpty(sid: str, tid: str):
     master_fd, slave_fd = os.openpty()
     try:
-        try:
-            os.chdir(ROOT_PATH)
-        except Exception:
-            os.chdir(START_PATH)
-        shell_path, shell_name = _detect_shell_path()
         env = os.environ.copy()
         env.setdefault('TERM', 'xterm-256color')
         env.setdefault('HOME', ROOT_PATH)
+        cmd = _detect_shell_cmd()
         p = subprocess.Popen(
-            [shell_path],
+            cmd,
             preexec_fn=os.setsid,
             stdin=slave_fd,
             stdout=slave_fd,
             stderr=slave_fd,
             close_fds=True,
-            env=env
+            env=env,
+            cwd=ROOT_PATH
         )
         os.close(slave_fd)
         return p.pid, master_fd
@@ -541,7 +539,8 @@ def http_term_new():
         tid = _start_terminal(cid)
         return jsonify({ 'tid': tid })
     except Exception as e:
-        return jsonify({ 'error': f'Failed to start terminal: {e}' }), 500
+        traceback.print_exc()
+        return jsonify({ 'error': f'Failed to start terminal: {type(e).__name__}: {e}' }), 500
 
 
 @app.route('/api/term/input', methods=['POST', 'GET'])
