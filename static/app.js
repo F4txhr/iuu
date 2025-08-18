@@ -136,6 +136,10 @@ const httpTerm = {
 
 if (httpTerm.enabled) { httpTerm.start(); }
 
+// Create terminal input bar
+(function(){ if(!termContainer) return; const bar=document.createElement('div'); bar.id='terminal-inputbar'; const inp=document.createElement('input'); inp.type='text'; inp.placeholder='Type a command and press Enter'; const btn=document.createElement('button'); btn.textContent='Send'; bar.appendChild(inp); bar.appendChild(btn); termContainer.appendChild(bar); function send(){ const v=inp.value; if(!v) return; sendToTerminal(v.endsWith('\n')?v:(v+'\n')); inp.value=''; } inp.addEventListener('keydown',e=>{ if(e.key==='Enter'){ send(); } }); btn.addEventListener('click', send); // focus click anywhere near terminal
+ termContainer.addEventListener('click', ()=>{ inp.focus(); }); })();
+
 // Click to focus terminal
 termContainer && termContainer.addEventListener('click', ()=>{ if(activeTid && terminals[activeTid]){ terminals[activeTid].term.focus(); } });
 

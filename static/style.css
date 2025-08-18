@@ -56,9 +56,14 @@ body {
 
 .ctx-menu-btn { background: none; border: none; color: var(--muted); font-weight: bold; cursor: pointer; padding: 0 5px; float: right; }
 #fe-upload-btn { margin:8px; width:90%; }
-#preview-modal { position: fixed; left:0; top:0; width:100vw; height:100vh; background:rgba(0,0,0,0.70); display:flex; align-items:center; justify-content:center; z-index:20; }
+#preview-modal { display:none; position: fixed; left:0; top:0; width:100vw; height:100vh; background:rgba(0,0,0,0.70); align-items:center; justify-content:center; z-index:20; }
 #preview-content { background:#222; color:#fff; padding:18px; max-width:80vw; max-height:80vh; overflow:auto;}
 #preview-close { position:absolute; top:12px; right:16px; font-size:26px; background:none; border:none; color:#fff; cursor:pointer; }
+
+/* Terminal input bar */
+#terminal-inputbar { position:absolute; left:0; right:0; bottom:0; height:36px; background: var(--panel2); border-top:1px solid var(--border); display:flex; align-items:center; gap:6px; padding:4px 8px; }
+#terminal-inputbar input { flex:1; background:#111; color:#fff; border:1px solid #333; border-radius:4px; padding:6px; }
+#terminal-inputbar button { background:#2a2f3a; color:#fff; border:none; padding:6px 10px; border-radius:4px; cursor:pointer; }
 
 #toast { position:fixed; bottom:60px; left:50%; transform:translateX(-50%); background:#202223cc; color:#fff; padding:8px 18px; border-radius:8px; display:none; z-index:30; font-size:15px; }
 

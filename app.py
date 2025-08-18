@@ -388,6 +388,8 @@ def _start_pty_fork(sid: str, tid: str):
         except Exception:
             os.chdir(START_PATH)
         shell_path, shell_name = _detect_shell_path()
+        os.environ.setdefault('TERM', 'xterm-256color')
+        os.environ.setdefault('HOME', ROOT_PATH)
         os.execv(shell_path, [shell_name])
     else:
         return pid, fd
@@ -401,13 +403,17 @@ def _start_pty_openpty(sid: str, tid: str):
         except Exception:
             os.chdir(START_PATH)
         shell_path, shell_name = _detect_shell_path()
+        env = os.environ.copy()
+        env.setdefault('TERM', 'xterm-256color')
+        env.setdefault('HOME', ROOT_PATH)
         p = subprocess.Popen(
             [shell_path],
             preexec_fn=os.setsid,
             stdin=slave_fd,
             stdout=slave_fd,
             stderr=slave_fd,
-            close_fds=True
+            close_fds=True,
+            env=env
         )
         os.close(slave_fd)
         return p.pid, master_fd
