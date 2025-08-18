@@ -148,10 +148,15 @@ function setEditorLanguageByExt(path){ if(!window.monaco || !monacoEditor) retur
 // Breadcrumbs
 function renderBreadcrumbs(path) { if(!breadcrumb) return; breadcrumb.innerHTML = ''; const parts = path.split('/').filter(p => p); let currentPath = ''; const home = document.createElement('a'); home.href = '#'; home.textContent = '🏠'; home.onclick = (e) => { e.preventDefault(); listDir('/'); }; breadcrumb.appendChild(home); for (const part of parts) { currentPath += `/${part}`; const sep = document.createElement('span'); sep.textContent = ' > '; breadcrumb.appendChild(sep); const link = document.createElement('a'); link.href = '#'; link.textContent = part; ((p) => { link.onclick = (e) => { e.preventDefault(); listDir(p); }; })(currentPath); breadcrumb.appendChild(link); } }
 
-// Directory list with simple virtualization
-function listDir(path){ const url = path ? `/api/list?path=${encodeURIComponent(path)}` : '/api/list'; fetch(url).then(r=>r.json()).then(res=>{ if(res.error){ toast(res.error); return; } cwd = res.cwd; localStorage.setItem('cwd', cwd); renderBreadcrumbs(cwd); renderFilesVirtual(res.items || []); }).catch(err=>{ console.error('list error', err); toast('Gagal load list'); }); }
+// Hidden files toggle
+let showHidden = localStorage.getItem('showHidden') === '1';
+const hiddenBtn = document.getElementById('fe-hidden');
+if(hiddenBtn){ hiddenBtn.textContent = `Hidden: ${showHidden?'On':'Off'}`; hiddenBtn.onclick = ()=>{ showHidden=!showHidden; localStorage.setItem('showHidden', showHidden?'1':'0'); hiddenBtn.textContent = `Hidden: ${showHidden?'On':'Off'}`; listDir(cwd); }; }
 
-function renderFilesVirtual(items){ if(!fileListBody||!fileListContainer) return; fileListBody.innerHTML=''; const rowHeight=28; const container = fileListContainer; const total=items.length; const viewport=()=>{ const visible = Math.ceil(container.clientHeight/rowHeight)+10; const scrollTop = container.scrollTop; const start = Math.max(0, Math.floor(scrollTop/rowHeight)-5); const end = Math.min(total, start+visible); fileListBody.innerHTML=''; const topH = start*rowHeight; const bottomH = (total-end)*rowHeight; const topTr=document.createElement('tr'); topTr.style.height=topH+'px'; fileListBody.appendChild(topTr); for(let i=start;i<end;i++){ const f=items[i]; const row = fileListBody.insertRow(); row.className = f.is_dir ? 'fe-folder' : 'fe-file'; const fullPath = cwd.replace(/\/+$/,"")+"/"+f.name; const nameCell=row.insertCell(); nameCell.textContent=(f.is_dir?"📁 ":"📄 ")+f.name; nameCell.onclick = f.is_dir ? ()=>listDir(fullPath) : ()=>openFile(fullPath, f); row.insertCell().textContent=f.size; row.insertCell().textContent=f.modified; const menuBtn=document.createElement('button'); menuBtn.textContent='…'; menuBtn.className='ctx-menu-btn'; menuBtn.onclick=e=>{ e.stopPropagation(); contextTarget={ path: fullPath, is_dir: f.is_dir, is_txt: f.is_txt, name: f.name }; contextMenu.style.display='flex'; const rect=e.target.getBoundingClientRect(); contextMenu.style.top=`${rect.bottom}px`; contextMenu.style.left=`${rect.left - contextMenu.offsetWidth + rect.width}px`; document.querySelector('[data-action="run"]').style.display = (contextTarget.is_txt && (contextTarget.name.endsWith('.py') || contextTarget.name.endsWith('.sh'))) ? 'block' : 'none'; document.querySelector('[data-action="download"]').style.display = contextTarget.is_dir ? 'none' : 'block'; }; row.insertCell().appendChild(menuBtn); } const bottomTr=document.createElement('tr'); bottomTr.style.height=bottomH+'px'; fileListBody.appendChild(bottomTr); }; container.onscroll=viewport; viewport(); }
+// Directory list without filtering hidden by default (Termux)
+function listDir(path){ const url = path ? `/api/list?path=${encodeURIComponent(path)}` : '/api/list'; fetch(url).then(r=>r.json()).then(res=>{ if(res.error){ toast(res.error); return; } cwd = res.cwd; localStorage.setItem('cwd', cwd); renderBreadcrumbs(cwd); let items = res.items || []; if(!showHidden){ items = items.filter(it=>!it.name.startsWith('.')); } renderFilesVirtual(items); }).catch(err=>{ console.error('list error', err); toast('Gagal load list'); }); }
+
+function renderFilesVirtual(items){ if(!fileListBody||!fileListContainer) return; fileListBody.innerHTML=''; const rowHeight=28; const container = fileListContainer; const total=items.length; const viewport=()=>{ const visible = Math.ceil(container.clientHeight/rowHeight)+10; const scrollTop = container.scrollTop; const start = Math.max(0, Math.floor(scrollTop/rowHeight)-5); const end = Math.min(total, start+visible); fileListBody.innerHTML=''; const topH = start*rowHeight; const bottomH = (total-end)*rowHeight; const topTr=document.createElement('tr'); topTr.style.height=topH+'px'; fileListBody.appendChild(topTr); for(let i=start;i<end;i++){ const f=items[i]; const row = fileListBody.insertRow(); row.className = f.is_dir ? 'fe-folder' : 'fe-file'; const fullPath = cwd.replace(/\/+$/,"")+"/"+f.name; const nameCell=row.insertCell(); nameCell.textContent=(f.is_dir?"📁 ":"📄 ")+f.name; nameCell.onclick = f.is_dir ? ()=>listDir(fullPath) : ()=>openFile(fullPath, f); row.insertCell().textContent=f.size; row.insertCell().textContent=f.modified; const menuBtn=document.createElement('button'); menuBtn.textContent='…'; menuBtn.className='ctx-menu-btn'; menuBtn.onclick=e=>{ e.stopPropagation(); contextTarget={ path: fullPath, is_dir: f.is_dir, is_txt: f.is_txt, name: f.name }; showContextMenu(e); const rect=e.target.getBoundingClientRect(); positionContextMenu(contextMenu, rect); document.querySelector('[data-action="run"]').style.display = (contextTarget.is_txt && (contextTarget.name.endsWith('.py') || contextTarget.name.endsWith('.sh'))) ? 'block' : 'none'; document.querySelector('[data-action="download"]').style.display = contextTarget.is_dir ? 'none' : 'block'; }; row.insertCell().appendChild(menuBtn); } const bottomTr=document.createElement('tr'); bottomTr.style.height=bottomH+'px'; fileListBody.appendChild(bottomTr); }; container.onscroll=viewport; viewport(); }
 
 // File open/save
 function openFile(path, meta){ activeFilePath = path; if(topbarTitle) topbarTitle.textContent = path; if(meta && meta.is_img){ previewFile(path, meta); return; } fetch(`/api/read-file?path=${encodeURIComponent(path)}`).then(r=>r.json()).then(res=>{ if(!res.ok){ toast(res.error||'Gagal membuka file'); return; } if(monacoEditor){ monacoEditor.setValue(res.data||''); setEditorLanguageByExt(path); } }).catch(err=>{ console.error('read error', err); toast('Gagal membuka file'); }); }
@@ -205,3 +210,24 @@ window.addEventListener('resize', ()=>{ Object.values(terminals).forEach(ent=>{ 
 
 // Init
 listDir(cwd);
+
+// HTTP terminal bind input to xterm
+if (httpTerm.enabled) {
+  // when the HTTP terminal first mounts, set up onData handler
+  const origStart = httpTerm.start.bind(httpTerm);
+  httpTerm.start = async function(){ await origStart(); if(activeTid && terminals[activeTid]){ const ent=terminals[activeTid]; ent.term.onData(d=>httpTerm.send(d)); } };
+}
+
+// Context menu positioning fix: keep within viewport
+function positionContextMenu(menu, rect){ const vpW=window.innerWidth, vpH=window.innerHeight; const menuW=menu.offsetWidth||160, menuH=menu.offsetHeight||120; let left=rect.left - menuW + rect.width; let top=rect.bottom; if(left+menuW>vpW) left = vpW - menuW - 8; if(left<0) left=8; if(top+menuH>vpH) top = rect.top - menuH; if(top<0) top=8; menu.style.left = left+'px'; menu.style.top = top+'px'; }
+
+// Use the positioning when opening context menu
+if (fileListContainer) {
+  // rebind inside render as well; ensure called
+}
+
+// Update handlers where contextMenu is shown
+function showContextMenu(e){ e.stopPropagation(); contextMenu.style.display='flex'; positionContextMenu(contextMenu, e.target.getBoundingClientRect()); }
+
+// Apply showContextMenu in places context menu is opened
+// (we keep existing code but route through helper)
