@@ -88,8 +88,11 @@ body {
   cursor: pointer;
   box-shadow: 0 2px 8px #0003;
 }
-#file-explorer:not(.collapsed) ~ .fe-float {
-  display: none;
+/* Hide float when explorer open (small screens only) */
+@media (max-width: 1023px) {
+  #file-explorer:not(.collapsed) + .fe-float {
+    display: none;
+  }
 }
 
 #custom-path { width: 90px; font-size:13px; border-radius:3px; border:1px solid #444; padding:2px 5px;}

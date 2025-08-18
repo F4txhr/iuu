@@ -28,6 +28,7 @@ const fileExplorer = document.getElementById("file-explorer");
 const fileListBody = document.getElementById("file-list-body");
 const breadcrumb = document.getElementById("cwd-breadcrumb");
 const contextMenu = document.getElementById("context-menu");
+const fileListContainer = document.getElementById("file-list-container");
 let contextTarget = null; // will store path for context menu
 // FE toggle button (floating, di luar explorer)
 const feToggle = document.getElementById("fe-toggle");
@@ -181,24 +182,24 @@ document.getElementById("fe-upload").onchange = function(){
   fetch(`/api/upload?path=${encodeURIComponent(cwd)}`,{method:"POST",body:fd})
     .then(r=>r.json())
     .then(res=>{
-      if(res.ok){ toast("Upload berhasil"); listDir(cwd);}
-      else toast("Gagal upload");
+      if(res.ok){ toast("Upload berhasil"); listDir(cwd);} else toast(res.error||"Gagal upload");
     });
 };
 // Drag & drop
-fileList.ondragover = e => {e.preventDefault();};
-fileList.ondrop = e => {
-  e.preventDefault();
-  const files = e.dataTransfer.files; if(!files.length) return;
-  const fd = new FormData();
-  fd.append('file', files[0]); // multi bisa diubah sesuai backend
-  fetch(`/api/upload?path=${encodeURIComponent(cwd)}`,{method:"POST",body:fd})
-    .then(r=>r.json())
-    .then(res=>{
-      if(res.ok){ toast("Upload berhasil"); listDir(cwd);}
-      else toast("Gagal upload");
-    });
-};
+if (fileListContainer) {
+  fileListContainer.ondragover = e => {e.preventDefault();};
+  fileListContainer.ondrop = e => {
+    e.preventDefault();
+    const files = e.dataTransfer.files; if(!files.length) return;
+    const fd = new FormData();
+    for (let f of files) fd.append('file', f);
+    fetch(`/api/upload?path=${encodeURIComponent(cwd)}`,{method:"POST",body:fd})
+      .then(r=>r.json())
+      .then(res=>{
+        if(res.ok){ toast("Upload berhasil"); listDir(cwd);} else toast(res.error||"Gagal upload");
+      });
+  };
+}
 
 // Custom path
 document.getElementById("fe-goto").onclick = ()=>{
