@@ -1,7 +1,7 @@
 from flask import Flask, request, jsonify, send_from_directory, send_file
 from flask_socketio import SocketIO, emit
 from werkzeug.utils import secure_filename
-import os, pty, select, threading, base64, shutil
+import os, pty, select, threading, base64, shutil, signal
 from datetime import datetime
 
 app = Flask(__name__, static_url_path='/static')
@@ -13,7 +13,11 @@ START_PATH = os.environ.get("START_PATH", os.path.expanduser("~"))
 ROOT_PATH = os.environ.get("ROOT_PATH", START_PATH)
 ROOT_REAL = os.path.realpath(ROOT_PATH)
 
-cwd = [ROOT_PATH]  # mutable for threading
+cwd = [ROOT_PATH]  # mutable for threading (global cwd for listing)
+
+# PTY sessions: { sid: { 'counter': int, 'terms': { tid: {'fd':int,'pid':int,'thread':Thread} } } }
+PTY_SESSIONS = {}
+SESSIONS_LOCK = threading.Lock()
 
 
 def _is_within_root(path: str) -> bool:
@@ -95,6 +99,36 @@ def list_dir():
         return jsonify({"error": str(e)}), 400
 
 
+# API: search files (Quick Open)
+@app.route('/api/search')
+def search_files():
+    q = (request.args.get('q') or '').strip().lower()
+    limit = int(request.args.get('limit', 200))
+    if not q:
+        return jsonify({"results": []})
+    results = []
+    try:
+        for root, dirs, files in os.walk(ROOT_PATH):
+            # Guard: avoid hidden dirs flood
+            dirs[:] = [d for d in dirs if not d.startswith('.')]
+            for name in files + dirs:
+                if q in name.lower():
+                    full = os.path.join(root, name)
+                    try:
+                        full = _safe_path(full)
+                    except Exception:
+                        continue
+                    results.append({
+                        "path": full,
+                        "is_dir": os.path.isdir(full)
+                    })
+                    if len(results) >= limit:
+                        raise StopIteration
+    except StopIteration:
+        pass
+    return jsonify({"results": results})
+
+
 # API: download
 @app.route('/api/download')
 def download_file():
@@ -174,7 +208,6 @@ def save_file():
     except Exception:
         return jsonify({"error": "Invalid path"}), 400
     try:
-        # Ensure parent exists
         parent = os.path.dirname(path)
         if not _is_within_root(parent):
             return jsonify({"error": "Parent path invalid"}), 400
@@ -303,68 +336,128 @@ def delete_item():
         return jsonify({"error": str(e)}), 400
 
 
-# --- Terminal PTY ---
-master_fd = None
-child_pid = None
+# --- Multi-PTY Support ---
+
+def _reader_loop(sid: str, tid: str, master_fd: int):
+    while True:
+        try:
+            r, _, _ = select.select([master_fd], [], [], 0.1)
+            if r:
+                out = os.read(master_fd, 1024 * 20)
+                if out:
+                    socketio.emit('terminal_output', { 'tid': tid, 'data': out.decode(errors='ignore') }, to=sid)
+        except Exception:
+            break
+        socketio.sleep(0.01)
 
 
-def setup_terminal():
-    global master_fd, child_pid
-    if child_pid:
-        return  # Already started
-
-    (pid, fd) = pty.fork()
-    if pid == 0:  # Child
-        # Start a new shell session
+def _start_terminal(sid: str) -> str:
+    with SESSIONS_LOCK:
+        if sid not in PTY_SESSIONS:
+            PTY_SESSIONS[sid] = { 'counter': 0, 'terms': {} }
+        sess = PTY_SESSIONS[sid]
+        sess['counter'] += 1
+        tid = str(sess['counter'])
+    pid, fd = pty.fork()
+    if pid == 0:
         try:
             os.chdir(ROOT_PATH)
         except Exception:
             os.chdir(START_PATH)
         os.execv('/bin/bash', ['/bin/bash'])
-    else:  # Parent
-        child_pid = pid
-        master_fd = fd
-        # Optional: set an initial command or welcome message
-        # os.write(master_fd, b"echo 'Welcome to the web terminal!'\n")
+    else:
+        t = threading.Thread(target=_reader_loop, args=(sid, tid, fd), daemon=True)
+        t.start()
+        with SESSIONS_LOCK:
+            PTY_SESSIONS[sid]['terms'][tid] = { 'fd': fd, 'pid': pid, 'thread': t }
+        return tid
 
 
-def read_and_forward_pty_output():
-    global master_fd
-    while True:
-        if master_fd:
-            try:
-                r, _, _ = select.select([master_fd], [], [], 0.1)
-                if r:
-                    output = os.read(master_fd, 1024 * 20)
-                    if output:
-                        socketio.emit('terminal_output', output.decode(errors='ignore'))
-            except Exception:
-                # Process might have died
-                socketio.emit('terminal_output', '\n--- Shell exited ---\n')
-                break
-        socketio.sleep(0.01)
+def _stop_terminal(sid: str, tid: str):
+    with SESSIONS_LOCK:
+        term = PTY_SESSIONS.get(sid, {}).get('terms', {}).pop(tid, None)
+    if term:
+        try:
+            os.close(term['fd'])
+        except Exception:
+            pass
+        try:
+            os.kill(term['pid'], signal.SIGKILL)
+        except Exception:
+            pass
+
+
+def _cleanup_sid(sid: str):
+    with SESSIONS_LOCK:
+        sess = PTY_SESSIONS.pop(sid, None)
+    if not sess:
+        return
+    for tid, term in sess['terms'].items():
+        try:
+            os.close(term['fd'])
+        except Exception:
+            pass
+        try:
+            os.kill(term['pid'], signal.SIGKILL)
+        except Exception:
+            pass
 
 
 @socketio.on('connect')
-def connect():
-    if child_pid is None:
-        setup_terminal()
+def on_connect():
+    sid = request.sid
+    tid = _start_terminal(sid)
+    socketio.emit('terminal_started', { 'tid': tid }, to=sid)
+
+
+@socketio.on('disconnect')
+def on_disconnect():
+    sid = request.sid
+    _cleanup_sid(sid)
+
+
+@socketio.on('terminal_new')
+def terminal_new():
+    sid = request.sid
+    tid = _start_terminal(sid)
+    socketio.emit('terminal_started', { 'tid': tid }, to=sid)
 
 
 @socketio.on('terminal_input')
-def terminal_input(data):
-    if master_fd:
-        os.write(master_fd, data.encode())
+def terminal_input(payload):
+    # payload: { tid: str, data: str }
+    sid = request.sid
+    if not isinstance(payload, dict):
+        return
+    tid = payload.get('tid')
+    data = payload.get('data', '')
+    with SESSIONS_LOCK:
+        term = PTY_SESSIONS.get(sid, {}).get('terms', {}).get(tid)
+    if term:
+        os.write(term['fd'], data.encode())
 
 
 @socketio.on('terminal_clear')
-def terminal_clear():
-    if master_fd:
-        os.write(master_fd, b'\033c')
+def terminal_clear(payload):
+    sid = request.sid
+    tid = None
+    if isinstance(payload, dict):
+        tid = payload.get('tid')
+    with SESSIONS_LOCK:
+        term = PTY_SESSIONS.get(sid, {}).get('terms', {}).get(tid)
+    if term:
+        os.write(term['fd'], b'\033c')
+
+
+@socketio.on('terminal_close')
+def terminal_close(payload):
+    sid = request.sid
+    if not isinstance(payload, dict):
+        return
+    tid = payload.get('tid')
+    if tid:
+        _stop_terminal(sid, tid)
 
 
 if __name__ == '__main__':
-    # Start the PTY reader thread
-    threading.Thread(target=read_and_forward_pty_output, daemon=True).start()
-    # Start the Flask-SocketIO server
     socketio.run(app, host='0.0.0.0', port=8080, allow_unsafe_werkzeug=True)
