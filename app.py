@@ -20,6 +20,26 @@ PTY_SESSIONS = {}
 SESSIONS_LOCK = threading.Lock()
 
 
+def _detect_shell_path() -> list:
+    # Prefer explicit SHELL if valid
+    sh = os.environ.get('SHELL')
+    if sh and os.path.exists(sh):
+        return [sh, sh]
+    # Common Termux locations and Android
+    candidates = [
+        '/data/data/com.termux/files/usr/bin/bash',
+        '/data/data/com.termux/files/usr/bin/sh',
+        '/system/bin/sh',
+        '/bin/bash',
+        '/bin/sh',
+    ]
+    for c in candidates:
+        if os.path.exists(c):
+            return [c, c]
+    # Fallback to PATH lookup
+    return ['sh', 'sh']
+
+
 def _is_within_root(path: str) -> bool:
     real = os.path.realpath(path)
     return real == ROOT_REAL or real.startswith(ROOT_REAL + os.sep)
@@ -375,7 +395,8 @@ def _start_terminal(sid: str) -> str:
             os.chdir(ROOT_PATH)
         except Exception:
             os.chdir(START_PATH)
-        os.execv('/bin/bash', ['/bin/bash'])
+        shell_path, shell_name = _detect_shell_path()
+        os.execv(shell_path, [shell_name])
     else:
         t = threading.Thread(target=_reader_loop, args=(sid, tid, fd), daemon=True)
         t.start()
