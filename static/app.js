@@ -1,11 +1,38 @@
 // Socket
 const socket = (typeof io === 'function') ? io() : { on: ()=>{}, emit: ()=>{} };
 
-if (typeof io !== 'function') {
-  console.warn('Socket.IO client not loaded; using no-op socket. Terminal features will be disabled.');
-}
+// Always start HTTP fallback; disable if Socket connects
+const httpTerm = {
+  enabled: true,
+  cid: 'http',
+  tid: null,
+  pollTimer: null,
+  start: async function(){
+    try{
+      if(this.pollTimer){ clearTimeout(this.pollTimer); this.pollTimer=null; }
+      const r = await fetch(`/api/term/new?cid=${encodeURIComponent(this.cid)}`, { method:'POST' });
+      const j = await r.json(); if(!j.tid){ throw new Error(j.error||'no tid'); } this.tid = j.tid;
+      if(!activeTid || !terminals['http']){
+        const { t, fitAddon, searchAddon } = createXterm();
+        terminals['http'] = { term:t, fitAddon, searchAddon };
+        activeTid = 'http'; renderTabs(); mountTerminal('http'); t.onData(d=>httpTerm.send(d)); setTimeout(()=>{ try{ fitAddon && fitAddon.fit(); }catch{} }, 0);
+      }
+      this.poll(); toast('HTTP terminal ready'); this.send('\n'); if(cwd){ try{ sendToTerminal(`cd "${cwd.replace(/\"/g,'\\\"')}" && ls\n`); }catch{} }
+    }catch(e){ console.error('HTTP term new err', e); toast('Gagal membuat terminal HTTP'); }
+  },
+  send: async function(data){ if(!this.tid||!this.enabled) return; try{ await fetch(`/api/term/input?cid=${encodeURIComponent(this.cid)}`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ tid:this.tid, data }) }); }catch(e){ console.error('HTTP term send err', e); } },
+  clear: async function(){ if(!this.tid||!this.enabled) return; try{ await fetch(`/api/term/clear?cid=${encodeURIComponent(this.cid)}`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ tid:this.tid }) }); }catch(e){} },
+  close: async function(){ if(!this.tid) return; try{ await fetch(`/api/term/close?cid=${encodeURIComponent(this.cid)}`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ tid:this.tid }) }); }catch(e){} finally { if(this.pollTimer){ clearTimeout(this.pollTimer); this.pollTimer=null; } this.tid=null; } },
+  poll: async function(){ const currentTid=this.tid; if(!currentTid||!this.enabled) return; try{ const r = await fetch(`/api/term/poll?cid=${encodeURIComponent(this.cid)}&tid=${encodeURIComponent(currentTid)}`); const j = await r.json(); const data = j.data||''; if(this.tid!==currentTid||!this.enabled) return; if(data){ const ent = terminals[activeTid]; ent && ent.term.write(data); } }catch(e){ /* ignore */ } this.pollTimer = setTimeout(()=>this.poll(), 250); }
+};
+httpTerm.start();
 
-socket.on && socket.on('connect', ()=>{ try{ toast('Connected'); }catch{} socket.emit && socket.emit('terminal_new'); if(!cwd) listDir(); });
+// If Socket.IO ever connects and starts a terminal, disable HTTP fallback
+socket.on && socket.on('connect', ()=>{ /* wait for started */ });
+socket.on && socket.on('terminal_started', ({tid})=>{ if(httpTerm.enabled){ httpTerm.enabled=false; httpTerm.close(); } /* proceed with socket terminals */ });
+
+// Connection toasts
+socket.on && socket.on('connect', ()=>{ try{ toast('Connected'); }catch{} });
 socket.on && socket.on('disconnect', ()=>{ try{ toast('Disconnected'); }catch{} });
 socket.on && socket.on('connect_error', (err)=>{ console.error('Socket connect_error', err); try{ toast('Socket error'); }catch{} });
 
@@ -101,40 +128,41 @@ socket.on('terminal_started', ({tid})=>{
 socket.on('terminal_output', ({tid, data})=>{ const ent = terminals[tid]; if(ent){ ent.term.write(data); } });
 
 // Fallback HTTP terminal client when Socket.IO is unavailable
-const httpTerm = {
-  enabled: (typeof io !== 'function'),
-  cid: 'http',
-  tid: null,
-  pollTimer: null,
-  start: async function(){
-    try{
-      if(this.pollTimer){ clearTimeout(this.pollTimer); this.pollTimer=null; }
-      const r = await fetch(`/api/term/new?cid=${encodeURIComponent(this.cid)}`, { method:'POST' });
-      const j = await r.json(); this.tid = j.tid;
-      // Mount a terminal immediately for input
-      if(!activeTid || !terminals['http']){
-        const { t, fitAddon, searchAddon } = createXterm();
-        terminals['http'] = { term:t, fitAddon, searchAddon };
-        activeTid = 'http';
-        renderTabs();
-        mountTerminal('http');
-        t.onData(d=>httpTerm.send(d));
-        setTimeout(()=>{ try{ fitAddon && fitAddon.fit(); }catch{} }, 0);
-      }
-      this.poll();
-      toast('HTTP terminal ready');
-      // Nudge shell to print prompt and sync to current cwd
-      this.send('\n');
-      if(cwd){ try{ sendToTerminal(`cd "${cwd.replace(/\"/g,'\\\"')}" && ls\n`); }catch{} }
-    }catch(e){ console.error('HTTP term new err', e); toast('Gagal membuat terminal HTTP'); }
-  },
-  send: async function(data){ if(!this.tid) return; try{ await fetch(`/api/term/input?cid=${encodeURIComponent(this.cid)}`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ tid:this.tid, data }) }); }catch(e){ console.error('HTTP term send err', e); } },
-  clear: async function(){ if(!this.tid) return; try{ await fetch(`/api/term/clear?cid=${encodeURIComponent(this.cid)}`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ tid:this.tid }) }); }catch(e){} },
-  close: async function(){ if(!this.tid) return; try{ await fetch(`/api/term/close?cid=${encodeURIComponent(this.cid)}`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ tid:this.tid }) }); }catch(e){} },
-  poll: async function(){ const currentTid=this.tid; if(!currentTid) return; try{ const r = await fetch(`/api/term/poll?cid=${encodeURIComponent(this.cid)}&tid=${encodeURIComponent(currentTid)}`); const j = await r.json(); const data = j.data||''; if(this.tid!==currentTid) return; if(data){ const ent = terminals[activeTid]; ent && ent.term.write(data); } }catch(e){ /* ignore */ } this.pollTimer = setTimeout(()=>this.poll(), 250); }
-};
+// This block is now redundant as httpTerm.start() handles the fallback
+// const httpTerm = {
+//   enabled: (typeof io !== 'function'),
+//   cid: 'http',
+//   tid: null,
+//   pollTimer: null,
+//   start: async function(){
+//     try{
+//       if(this.pollTimer){ clearTimeout(this.pollTimer); this.pollTimer=null; }
+//       const r = await fetch(`/api/term/new?cid=${encodeURIComponent(this.cid)}`, { method:'POST' });
+//       const j = await r.json(); this.tid = j.tid;
+//       // Mount a terminal immediately for input
+//       if(!activeTid || !terminals['http']){
+//         const { t, fitAddon, searchAddon } = createXterm();
+//         terminals['http'] = { term:t, fitAddon, searchAddon };
+//         activeTid = 'http';
+//         renderTabs();
+//         mountTerminal('http');
+//         t.onData(d=>httpTerm.send(d));
+//         setTimeout(()=>{ try{ fitAddon && fitAddon.fit(); }catch{} }, 0);
+//       }
+//       this.poll();
+//       toast('HTTP terminal ready');
+//       // Nudge shell to print prompt and sync to current cwd
+//       this.send('\n');
+//       if(cwd){ try{ sendToTerminal(`cd "${cwd.replace(/\"/g,'\\\"')}" && ls\n`); }catch{} }
+//     }catch(e){ console.error('HTTP term new err', e); toast('Gagal membuat terminal HTTP'); }
+//   },
+//   send: async function(data){ if(!this.tid) return; try{ await fetch(`/api/term/input?cid=${encodeURIComponent(this.cid)}`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ tid:this.tid, data }) }); }catch(e){ console.error('HTTP term send err', e); } },
+//   clear: async function(){ if(!this.tid) return; try{ await fetch(`/api/term/clear?cid=${encodeURIComponent(this.cid)}`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ tid:this.tid }) }); }catch(e){} },
+//   close: async function(){ if(!this.tid) return; try{ await fetch(`/api/term/close?cid=${encodeURIComponent(this.cid)}`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ tid:this.tid }) }); }catch(e){} },
+//   poll: async function(){ const currentTid=this.tid; if(!currentTid) return; try{ const r = await fetch(`/api/term/poll?cid=${encodeURIComponent(this.cid)}&tid=${encodeURIComponent(currentTid)}`); const j = await r.json(); const data = j.data||''; if(this.tid!==currentTid) return; if(data){ const ent = terminals[activeTid]; ent && ent.term.write(data); } }catch(e){ /* ignore */ } this.pollTimer = setTimeout(()=>this.poll(), 250); }
+// };
 
-if (httpTerm.enabled) { httpTerm.start(); }
+// if (httpTerm.enabled) { httpTerm.start(); }
 
 // Create terminal input bar
 (function(){ if(!termContainer) return; const bar=document.createElement('div'); bar.id='terminal-inputbar'; const inp=document.createElement('input'); inp.type='text'; inp.placeholder='Type a command and press Enter'; const btn=document.createElement('button'); btn.textContent='Send'; bar.appendChild(inp); bar.appendChild(btn); termContainer.appendChild(bar); function send(){ const v=inp.value; if(!v) return; sendToTerminal(v.endsWith('\n')?v:(v+'\n')); inp.value=''; } inp.addEventListener('keydown',e=>{ if(e.key==='Enter'){ send(); } }); btn.addEventListener('click', send); // focus click anywhere near terminal
@@ -162,13 +190,7 @@ window.require && window.require(['vs/editor/editor.main'], function(){ monacoEd
 function setEditorLanguageByExt(path){ if(!window.monaco || !monacoEditor) return; const ext = (path.split('.').pop()||'').toLowerCase(); const map = { js:'javascript', ts:'typescript', py:'python', json:'json', md:'markdown', html:'html', css:'css', sh:'shell', yml:'yaml', yaml:'yaml' }; monaco.editor.setModelLanguage(monacoEditor.getModel(), map[ext] || 'plaintext'); }
 
 // helper to send commands to terminal (Socket.IO or HTTP fallback)
-function sendToTerminal(cmd){
-  if(typeof io === 'function'){
-    if(activeTid) socket.emit('terminal_input', { tid: activeTid, data: cmd });
-  } else {
-    httpTerm.send(cmd);
-  }
-}
+function sendToTerminal(cmd){ if(activeTid==='http' || httpTerm.enabled){ httpTerm.send(cmd); } else { socket.emit && activeTid && socket.emit('terminal_input', { tid: activeTid, data: cmd }); } }
 
 function safeCd(path){
   const p = path.replace(/"/g,'\\"');
@@ -243,11 +265,12 @@ window.addEventListener('resize', ()=>{ Object.values(terminals).forEach(ent=>{ 
 listDir(cwd);
 
 // HTTP terminal bind input to xterm
-if (httpTerm.enabled) {
-  // when the HTTP terminal first mounts, set up onData handler
-  const origStart = httpTerm.start.bind(httpTerm);
-  httpTerm.start = async function(){ await origStart(); if(activeTid && terminals[activeTid]){ const ent=terminals[activeTid]; ent.term.onData(d=>httpTerm.send(d)); } };
-}
+// This block is now redundant as httpTerm.start() handles the binding
+// if (httpTerm.enabled) {
+//   // when the HTTP terminal first mounts, set up onData handler
+//   const origStart = httpTerm.start.bind(httpTerm);
+//   httpTerm.start = async function(){ await origStart(); if(activeTid && terminals[activeTid]){ const ent=terminals[activeTid]; ent.term.onData(d=>httpTerm.send(d)); } };
+// }
 
 // Context menu positioning fix: keep within viewport
 function positionContextMenu(menu, rect){ const vpW=window.innerWidth, vpH=window.innerHeight; const menuW=menu.offsetWidth||160, menuH=menu.offsetHeight||120; let left=rect.left - menuW + rect.width; let top=rect.bottom; if(left+menuW>vpW) left = vpW - menuW - 8; if(left<0) left=8; if(top+menuH>vpH) top = rect.top - menuH; if(top<0) top=8; menu.style.left = left+'px'; menu.style.top = top+'px'; }
