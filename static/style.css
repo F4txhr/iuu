@@ -20,6 +20,8 @@ body {
 #topbar .actions button { margin-left: 6px; }
 
 #editor { flex: 1 1 auto; min-height: 120px; }
+/* Editor looks empty until a file is opened */
+#editor:empty::before { content: 'Open a file from the left to start editing'; color: var(--muted); padding: 12px; display: block; }
 
 #h-split { height: 6px; background: #20242b; cursor: row-resize; }
 

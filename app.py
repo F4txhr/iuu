@@ -1,7 +1,7 @@
 from flask import Flask, request, jsonify, send_from_directory, send_file
 from flask_socketio import SocketIO, emit
 from werkzeug.utils import secure_filename
-import os, pty, select, threading, base64, shutil, signal
+import os, pty, select, threading, base64, shutil, signal, subprocess
 from datetime import datetime
 
 app = Flask(__name__, static_url_path='/static')
@@ -380,13 +380,7 @@ def _reader_loop(sid: str, tid: str, master_fd: int):
         socketio.sleep(0.01)
 
 
-def _start_terminal(sid: str) -> str:
-    with SESSIONS_LOCK:
-        if sid not in PTY_SESSIONS:
-            PTY_SESSIONS[sid] = { 'counter': 0, 'terms': {} }
-        sess = PTY_SESSIONS[sid]
-        sess['counter'] += 1
-        tid = str(sess['counter'])
+def _start_pty_fork(sid: str, tid: str):
     pid, fd = pty.fork()
     if pid == 0:
         try:
@@ -396,11 +390,56 @@ def _start_terminal(sid: str) -> str:
         shell_path, shell_name = _detect_shell_path()
         os.execv(shell_path, [shell_name])
     else:
-        t = threading.Thread(target=_reader_loop, args=(sid, tid, fd), daemon=True)
-        t.start()
-        with SESSIONS_LOCK:
-            PTY_SESSIONS[sid]['terms'][tid] = { 'fd': fd, 'pid': pid, 'thread': t, 'buffer': [], 'lock': threading.Lock() }
-        return tid
+        return pid, fd
+
+
+def _start_pty_openpty(sid: str, tid: str):
+    master_fd, slave_fd = os.openpty()
+    try:
+        try:
+            os.chdir(ROOT_PATH)
+        except Exception:
+            os.chdir(START_PATH)
+        shell_path, shell_name = _detect_shell_path()
+        p = subprocess.Popen(
+            [shell_path],
+            preexec_fn=os.setsid,
+            stdin=slave_fd,
+            stdout=slave_fd,
+            stderr=slave_fd,
+            close_fds=True
+        )
+        os.close(slave_fd)
+        return p.pid, master_fd
+    except Exception:
+        try:
+            os.close(master_fd)
+        except Exception:
+            pass
+        try:
+            os.close(slave_fd)
+        except Exception:
+            pass
+        raise
+
+
+def _start_terminal(sid: str) -> str:
+    with SESSIONS_LOCK:
+        if sid not in PTY_SESSIONS:
+            PTY_SESSIONS[sid] = { 'counter': 0, 'terms': {} }
+        sess = PTY_SESSIONS[sid]
+        sess['counter'] += 1
+        tid = str(sess['counter'])
+    # Try fork, fallback to openpty
+    try:
+        pid, fd = _start_pty_fork(sid, tid)
+    except Exception:
+        pid, fd = _start_pty_openpty(sid, tid)
+    t = threading.Thread(target=_reader_loop, args=(sid, tid, fd), daemon=True)
+    t.start()
+    with SESSIONS_LOCK:
+        PTY_SESSIONS[sid]['terms'][tid] = { 'fd': fd, 'pid': pid, 'thread': t, 'buffer': [], 'lock': threading.Lock() }
+    return tid
 
 
 def _stop_terminal(sid: str, tid: str):
@@ -491,8 +530,11 @@ def terminal_close(payload):
 @app.route('/api/term/new', methods=['POST'])
 def http_term_new():
     cid = request.args.get('cid', 'http')
-    tid = _start_terminal(cid)
-    return jsonify({ 'tid': tid })
+    try:
+        tid = _start_terminal(cid)
+        return jsonify({ 'tid': tid })
+    except Exception as e:
+        return jsonify({ 'error': f'Failed to start terminal: {e}' }), 500
 
 
 @app.route('/api/term/input', methods=['POST'])
