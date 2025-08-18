@@ -3,12 +3,11 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Termux Web Terminal</title>
+  <title>Web Terminal & File Manager</title>
   <link rel="stylesheet" href="./static/xterm.css">
   <link rel="stylesheet" href="./static/style.css">
 </head>
 <body>
-  <!-- Floating button always visible -->
   <button id="fe-toggle" class="fe-float">☰</button>
   <div id="file-explorer" class="collapsed">
     <div id="fe-header">
@@ -16,6 +15,7 @@
       <button id="fe-goto">Go</button>
       <button id="fe-new-file">+File</button>
       <button id="fe-new-dir">+Folder</button>
+      <button id="fe-refresh">↻</button>
     </div>
     <div id="cwd-breadcrumb"></div>
     <div id="file-list-container">
@@ -34,11 +34,24 @@
     <input type="file" id="fe-upload" style="display:none" multiple>
     <button id="fe-upload-btn">Upload</button>
   </div>
+
+  <div id="main">
+    <div id="topbar">
+      <div id="active-file">No file</div>
+      <div class="actions">
+        <button id="save-btn">Save (Ctrl+S)</button>
+      </div>
+    </div>
+    <div id="editor"></div>
+    <div id="h-split"></div>
+    <div id="terminal-container"></div>
+  </div>
+
   <div id="preview-modal" style="display:none;">
     <div id="preview-content"></div>
     <button id="preview-close">×</button>
   </div>
-  <div id="terminal"></div>
+
   <div id="context-menu" style="display:none;position:absolute;background-color:#333;border:1px solid #555;z-index:100;display:flex;flex-direction:column;">
     <button class="ctx-btn" data-action="run">▶️ Run</button>
     <button class="ctx-btn" data-action="rename">✏️ Rename</button>
@@ -46,6 +59,8 @@
     <button class="ctx-btn" data-action="download">⬇️ Download</button>
   </div>
   <div id="toast"></div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.51.0/min/vs/loader.min.js"></script>
   <script src="./static/xterm.js"></script>
   <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
   <script src="./static/app.js"></script>

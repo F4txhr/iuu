@@ -3,23 +3,55 @@ body {
   height:100vh; width:100vw;
   background: #181a20;
   font-family: 'Fira Mono', monospace;
+  color: #ddd;
 }
 
-#terminal {
+#main {
   position: fixed;
   left: 220px;
-  top: 0; 
-  bottom: 48px; 
+  top: 0;
+  bottom: 0;
   right: 0;
-  z-index: 1;
-  background: #181a20;
-  overflow: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+#topbar {
+  height: 40px;
+  background: #1b1e23;
+  border-bottom: 1px solid #292c31;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 10px;
+}
+#topbar .actions button { margin-left: 6px; }
+
+#editor {
+  flex: 1 1 auto;
+  min-height: 120px;
+}
+
+#h-split {
+  height: 6px;
+  background: #20242b;
+  cursor: row-resize;
+}
+
+#terminal-container {
+  flex: 0 0 35%;
+  min-height: 120px;
+  position: relative;
+}
+#terminal {
+  position: absolute;
+  left: 0; top: 0; right: 0; bottom: 0;
 }
 
 #file-explorer {
   position: fixed;
   left: 0; top: 0; bottom: 0;
-  width: 450px; /* Wider for table view */
+  width: 450px;
   background: #23272e;
   color: #fff;
   z-index: 10;
@@ -31,35 +63,24 @@ body {
 #file-explorer.collapsed {
   transform: translateX(-100%);
 }
-/* On small screens, it's an overlay */
+
 @media (max-width: 1023px) {
   #file-explorer {
     width: 80vw;
     min-width: 250px;
     max-width: 95vw;
   }
-  #terminal {
+  #main {
     left: 0;
   }
-  #input-form {
-    padding-left: 0;
-  }
 }
-/* On wide screens, it's a permanent sidebar */
 @media (min-width: 1024px) {
   #file-explorer, #file-explorer.collapsed {
     transform: translateX(0);
     transition: none;
   }
-  .fe-float {
-    display: none;
-  }
-  #terminal {
-    left: 450px;
-  }
-  #input-form {
-    padding-left: 450px;
-  }
+  .fe-float { display: none; }
+  #main { left: 450px; }
 }
 
 #fe-header {
@@ -88,14 +109,11 @@ body {
   cursor: pointer;
   box-shadow: 0 2px 8px #0003;
 }
-/* Hide float when explorer open (small screens only) */
 @media (max-width: 1023px) {
-  #file-explorer:not(.collapsed) + .fe-float {
-    display: none;
-  }
+  #file-explorer:not(.collapsed) + .fe-float { display: none; }
 }
 
-#custom-path { width: 90px; font-size:13px; border-radius:3px; border:1px solid #444; padding:2px 5px;}
+#custom-path { width: 120px; font-size:13px; border-radius:3px; border:1px solid #444; padding:2px 5px;}
 #cwd-breadcrumb {
   padding: 8px;
   background-color: #1b1e23;
@@ -123,11 +141,7 @@ body {
   border-bottom: 1px solid #2d3340;
   white-space: nowrap;
 }
-#file-list-table th {
-  background-color: #1b1e23;
-  position: sticky;
-  top: 0;
-}
+#file-list-table th { background-color: #1b1e23; position: sticky; top: 0; }
 #file-list-table tbody tr:hover { background-color: #2d3340; }
 #file-list-table tbody tr.fe-folder { font-weight:bold; color:#7ad; }
 #file-list-table tbody tr.fe-file { color:#fff; }
@@ -144,26 +158,9 @@ body {
   background:rgba(0,0,0,0.70); display:flex; align-items:center; justify-content:center; z-index:20;
 }
 #preview-content { background:#222; color:#fff; padding:18px; max-width:80vw; max-height:80vh; overflow:auto;}
-#preview-close {
-  position:absolute; top:12px; right:16px; font-size:26px; background:none; border:none; color:#fff; cursor:pointer;
-}
-#input-form {
-  position:fixed; left:0; bottom:0; width:100vw; background:#15181d;
-  padding:6px 220px 6px 0; z-index:10; border-top:1px solid #292c31;
-  display:flex; justify-content:center; align-items:center;
-  transition: padding-left 0.2s;
-}
-#terminal-input {
-  width:60vw; font-size:15px; border-radius:5px; border:1px solid #444;
-  background:#222; color:#fff; padding:6px;
-}
+#preview-close { position:absolute; top:12px; right:16px; font-size:26px; background:none; border:none; color:#fff; cursor:pointer; }
+
 #toast {
   position:fixed; bottom:60px; left:50%; transform:translateX(-50%);
   background:#202223cc; color:#fff; padding:8px 18px; border-radius:8px; display:none; z-index:30; font-size:15px;
-}
-@media (max-width: 700px) {
-  #file-explorer, #input-form { padding-left:0; }
-  #terminal { margin-left:0; left:0; }
-  #input-form { width:100vw; }
-  #terminal-input { width:80vw; }
 }

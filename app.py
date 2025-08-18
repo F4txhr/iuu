@@ -142,6 +142,49 @@ def preview_file():
         return jsonify({"type": "err", "data": str(e)})
 
 
+# API: read file (full, limited size)
+@app.route('/api/read-file')
+def read_file_full():
+    path = request.args.get('path')
+    try:
+        path = _safe_path(path)
+    except Exception:
+        return jsonify({"error": "Invalid path"}), 400
+    if not path or not os.path.isfile(path):
+        return jsonify({"error": "Not found"}), 404
+    try:
+        # Limit to 2 MB to avoid huge payloads
+        max_bytes = 2 * 1024 * 1024
+        with open(path, 'rb') as f:
+            data = f.read(max_bytes)
+        text = data.decode('utf-8', errors='ignore')
+        return jsonify({"ok": True, "data": text})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+
+# API: save file
+@app.route('/api/save-file', methods=['POST'])
+def save_file():
+    data = request.json or {}
+    path = data.get('path')
+    content = data.get('data', '')
+    try:
+        path = _safe_path(path)
+    except Exception:
+        return jsonify({"error": "Invalid path"}), 400
+    try:
+        # Ensure parent exists
+        parent = os.path.dirname(path)
+        if not _is_within_root(parent):
+            return jsonify({"error": "Parent path invalid"}), 400
+        with open(path, 'w', encoding='utf-8', errors='ignore') as f:
+            f.write(content)
+        return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+
 # API: upload
 @app.route('/api/upload', methods=['POST'])
 def upload_file():
