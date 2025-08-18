@@ -100,6 +100,33 @@ socket.on('terminal_started', ({tid})=>{
 
 socket.on('terminal_output', ({tid, data})=>{ const ent = terminals[tid]; if(ent){ ent.term.write(data); } });
 
+// Fallback HTTP terminal client when Socket.IO is unavailable
+const httpTerm = {
+  enabled: (typeof io !== 'function'),
+  cid: 'http',
+  tid: null,
+  pollTimer: null,
+  start: async function(){
+    try{
+      const r = await fetch(`/api/term/new?cid=${encodeURIComponent(this.cid)}`, { method:'POST' });
+      const j = await r.json(); this.tid = j.tid; this.poll(); toast('HTTP terminal ready');
+    }catch(e){ console.error('HTTP term new err', e); toast('Gagal membuat terminal HTTP'); }
+  },
+  send: async function(data){ if(!this.tid) return; try{ await fetch(`/api/term/input?cid=${encodeURIComponent(this.cid)}`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ tid:this.tid, data }) }); }catch(e){ console.error('HTTP term send err', e); } },
+  clear: async function(){ if(!this.tid) return; try{ await fetch(`/api/term/clear?cid=${encodeURIComponent(this.cid)}`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ tid:this.tid }) }); }catch(e){} },
+  close: async function(){ if(!this.tid) return; try{ await fetch(`/api/term/close?cid=${encodeURIComponent(this.cid)}`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ tid:this.tid }) }); }catch(e){} },
+  poll: async function(){ if(!this.tid) return; try{ const r = await fetch(`/api/term/poll?cid=${encodeURIComponent(this.cid)}&tid=${encodeURIComponent(this.tid)}`); const j = await r.json(); const data = j.data||''; if(data){ // write to active terminal
+        // create a single terminal if none
+        if(!activeTid){ const { t, fitAddon, searchAddon } = createXterm(); const tid='http'; terminals[tid]={ term:t, fitAddon, searchAddon }; activeTid=tid; renderTabs(); mountTerminal(tid); t.onData(d=>httpTerm.send(d)); }
+        const ent = terminals[activeTid]; ent && ent.term.write(data);
+      }
+    }catch(e){ /* ignore */ }
+    this.pollTimer = setTimeout(()=>this.poll(), 250);
+  }
+};
+
+if (httpTerm.enabled) { httpTerm.start(); }
+
 // Shortcuts
 document.addEventListener('keydown', e=>{
   if(e.ctrlKey && e.key==="l"){ if(activeTid) socket.emit('terminal_clear', { tid: activeTid }); e.preventDefault(); }

@@ -15,7 +15,7 @@ ROOT_REAL = os.path.realpath(ROOT_PATH)
 
 cwd = [ROOT_PATH]  # mutable for threading (global cwd for listing)
 
-# PTY sessions: { sid: { 'counter': int, 'terms': { tid: {'fd':int,'pid':int,'thread':Thread} } } }
+# PTY sessions: { sid: { 'counter': int, 'terms': { tid: {'fd':int,'pid':int,'thread':Thread,'buffer':list[str],'lock':Lock} } } }
 PTY_SESSIONS = {}
 SESSIONS_LOCK = threading.Lock()
 
@@ -109,7 +109,6 @@ def search_files():
     results = []
     try:
         for root, dirs, files in os.walk(ROOT_PATH):
-            # Guard: avoid hidden dirs flood
             dirs[:] = [d for d in dirs if not d.startswith('.')]
             for name in files + dirs:
                 if q in name.lower():
@@ -154,7 +153,6 @@ def preview_file():
         return jsonify({"error": "Not found"}), 404
     ext = os.path.splitext(path)[1].lower()
     try:
-        # Limit preview to reasonable file sizes (e.g., 5 MB)
         try:
             size_bytes = os.path.getsize(path)
         except OSError:
@@ -187,7 +185,6 @@ def read_file_full():
     if not path or not os.path.isfile(path):
         return jsonify({"error": "Not found"}), 404
     try:
-        # Limit to 2 MB to avoid huge payloads
         max_bytes = 2 * 1024 * 1024
         with open(path, 'rb') as f:
             data = f.read(max_bytes)
@@ -336,7 +333,12 @@ def delete_item():
         return jsonify({"error": str(e)}), 400
 
 
-# --- Multi-PTY Support ---
+# --- Multi-PTY Support with buffer ---
+
+def _get_term(sid: str, tid: str):
+    with SESSIONS_LOCK:
+        return PTY_SESSIONS.get(sid, {}).get('terms', {}).get(tid)
+
 
 def _reader_loop(sid: str, tid: str, master_fd: int):
     while True:
@@ -345,7 +347,16 @@ def _reader_loop(sid: str, tid: str, master_fd: int):
             if r:
                 out = os.read(master_fd, 1024 * 20)
                 if out:
-                    socketio.emit('terminal_output', { 'tid': tid, 'data': out.decode(errors='ignore') }, to=sid)
+                    # emit via socket
+                    try:
+                        socketio.emit('terminal_output', { 'tid': tid, 'data': out.decode(errors='ignore') }, to=sid)
+                    except Exception:
+                        pass
+                    # append to buffer for HTTP polling
+                    term = _get_term(sid, tid)
+                    if term:
+                        with term['lock']:
+                            term['buffer'].append(out.decode(errors='ignore'))
         except Exception:
             break
         socketio.sleep(0.01)
@@ -369,7 +380,7 @@ def _start_terminal(sid: str) -> str:
         t = threading.Thread(target=_reader_loop, args=(sid, tid, fd), daemon=True)
         t.start()
         with SESSIONS_LOCK:
-            PTY_SESSIONS[sid]['terms'][tid] = { 'fd': fd, 'pid': pid, 'thread': t }
+            PTY_SESSIONS[sid]['terms'][tid] = { 'fd': fd, 'pid': pid, 'thread': t, 'buffer': [], 'lock': threading.Lock() }
         return tid
 
 
@@ -403,6 +414,7 @@ def _cleanup_sid(sid: str):
             pass
 
 
+# Socket.IO events
 @socketio.on('connect')
 def on_connect():
     sid = request.sid
@@ -425,14 +437,12 @@ def terminal_new():
 
 @socketio.on('terminal_input')
 def terminal_input(payload):
-    # payload: { tid: str, data: str }
     sid = request.sid
     if not isinstance(payload, dict):
         return
     tid = payload.get('tid')
     data = payload.get('data', '')
-    with SESSIONS_LOCK:
-        term = PTY_SESSIONS.get(sid, {}).get('terms', {}).get(tid)
+    term = _get_term(sid, tid)
     if term:
         os.write(term['fd'], data.encode())
 
@@ -443,8 +453,7 @@ def terminal_clear(payload):
     tid = None
     if isinstance(payload, dict):
         tid = payload.get('tid')
-    with SESSIONS_LOCK:
-        term = PTY_SESSIONS.get(sid, {}).get('terms', {}).get(tid)
+    term = _get_term(sid, tid)
     if term:
         os.write(term['fd'], b'\033c')
 
@@ -457,6 +466,63 @@ def terminal_close(payload):
     tid = payload.get('tid')
     if tid:
         _stop_terminal(sid, tid)
+
+
+# HTTP fallback endpoints for terminal
+@app.route('/api/term/new', methods=['POST'])
+def http_term_new():
+    cid = request.args.get('cid', 'http')
+    tid = _start_terminal(cid)
+    return jsonify({ 'tid': tid })
+
+
+@app.route('/api/term/input', methods=['POST'])
+def http_term_input():
+    data = request.json or {}
+    cid = request.args.get('cid', 'http')
+    tid = data.get('tid')
+    inp = data.get('data', '')
+    term = _get_term(cid, tid)
+    if not term:
+        return jsonify({ 'error': 'No such terminal' }), 404
+    os.write(term['fd'], inp.encode())
+    return jsonify({ 'ok': True })
+
+
+@app.route('/api/term/clear', methods=['POST'])
+def http_term_clear():
+    data = request.json or {}
+    cid = request.args.get('cid', 'http')
+    tid = data.get('tid')
+    term = _get_term(cid, tid)
+    if not term:
+        return jsonify({ 'error': 'No such terminal' }), 404
+    os.write(term['fd'], b'\033c')
+    return jsonify({ 'ok': True })
+
+
+@app.route('/api/term/close', methods=['POST'])
+def http_term_close():
+    data = request.json or {}
+    cid = request.args.get('cid', 'http')
+    tid = data.get('tid')
+    _stop_terminal(cid, tid)
+    return jsonify({ 'ok': True })
+
+
+@app.route('/api/term/poll')
+def http_term_poll():
+    cid = request.args.get('cid', 'http')
+    tid = request.args.get('tid')
+    term = _get_term(cid, tid)
+    if not term:
+        return jsonify({ 'error': 'No such terminal' }), 404
+    out = ''
+    with term['lock']:
+        if term['buffer']:
+            out = ''.join(term['buffer'])
+            term['buffer'].clear()
+    return jsonify({ 'data': out })
 
 
 if __name__ == '__main__':
