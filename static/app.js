@@ -1,9 +1,13 @@
 // Socket
-const socket = io();
+const socket = (typeof io === 'function') ? io() : { on: ()=>{}, emit: ()=>{} };
 
-socket.on('connect', ()=>{ try{ toast('Connected'); }catch{} socket.emit('terminal_new'); if(!cwd) listDir(); });
-socket.on('disconnect', ()=>{ try{ toast('Disconnected'); }catch{} });
-socket.on('connect_error', (err)=>{ console.error('Socket connect_error', err); try{ toast('Socket error'); }catch{} });
+if (typeof io !== 'function') {
+  console.warn('Socket.IO client not loaded; using no-op socket. Terminal features will be disabled.');
+}
+
+socket.on && socket.on('connect', ()=>{ try{ toast('Connected'); }catch{} socket.emit && socket.emit('terminal_new'); if(!cwd) listDir(); });
+socket.on && socket.on('disconnect', ()=>{ try{ toast('Disconnected'); }catch{} });
+socket.on && socket.on('connect_error', (err)=>{ console.error('Socket connect_error', err); try{ toast('Socket error'); }catch{} });
 
 // State
 let cwd = localStorage.getItem('cwd') || "";
