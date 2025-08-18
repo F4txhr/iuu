@@ -108,6 +108,7 @@ const httpTerm = {
   pollTimer: null,
   start: async function(){
     try{
+      if(this.pollTimer){ clearTimeout(this.pollTimer); this.pollTimer=null; }
       const r = await fetch(`/api/term/new?cid=${encodeURIComponent(this.cid)}`, { method:'POST' });
       const j = await r.json(); this.tid = j.tid; this.poll(); toast('HTTP terminal ready');
     }catch(e){ console.error('HTTP term new err', e); toast('Gagal membuat terminal HTTP'); }
@@ -115,14 +116,7 @@ const httpTerm = {
   send: async function(data){ if(!this.tid) return; try{ await fetch(`/api/term/input?cid=${encodeURIComponent(this.cid)}`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ tid:this.tid, data }) }); }catch(e){ console.error('HTTP term send err', e); } },
   clear: async function(){ if(!this.tid) return; try{ await fetch(`/api/term/clear?cid=${encodeURIComponent(this.cid)}`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ tid:this.tid }) }); }catch(e){} },
   close: async function(){ if(!this.tid) return; try{ await fetch(`/api/term/close?cid=${encodeURIComponent(this.cid)}`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ tid:this.tid }) }); }catch(e){} },
-  poll: async function(){ if(!this.tid) return; try{ const r = await fetch(`/api/term/poll?cid=${encodeURIComponent(this.cid)}&tid=${encodeURIComponent(this.tid)}`); const j = await r.json(); const data = j.data||''; if(data){ // write to active terminal
-        // create a single terminal if none
-        if(!activeTid){ const { t, fitAddon, searchAddon } = createXterm(); const tid='http'; terminals[tid]={ term:t, fitAddon, searchAddon }; activeTid=tid; renderTabs(); mountTerminal(tid); t.onData(d=>httpTerm.send(d)); }
-        const ent = terminals[activeTid]; ent && ent.term.write(data);
-      }
-    }catch(e){ /* ignore */ }
-    this.pollTimer = setTimeout(()=>this.poll(), 250);
-  }
+  poll: async function(){ const currentTid=this.tid; if(!currentTid) return; try{ const r = await fetch(`/api/term/poll?cid=${encodeURIComponent(this.cid)}&tid=${encodeURIComponent(currentTid)}`); const j = await r.json(); const data = j.data||''; if(this.tid!==currentTid) return; if(data){ if(!activeTid){ const { t, fitAddon, searchAddon } = createXterm(); const tid='http'; terminals[tid]={ term:t, fitAddon, searchAddon }; activeTid=tid; renderTabs(); mountTerminal(tid); t.onData(d=>httpTerm.send(d)); } const ent = terminals[activeTid]; ent && ent.term.write(data); } }catch(e){ /* ignore */ } this.pollTimer = setTimeout(()=>this.poll(), 250); }
 };
 
 if (httpTerm.enabled) { httpTerm.start(); }
@@ -145,8 +139,22 @@ window.require && window.require(['vs/editor/editor.main'], function(){ monacoEd
 
 function setEditorLanguageByExt(path){ if(!window.monaco || !monacoEditor) return; const ext = (path.split('.').pop()||'').toLowerCase(); const map = { js:'javascript', ts:'typescript', py:'python', json:'json', md:'markdown', html:'html', css:'css', sh:'shell', yml:'yaml', yaml:'yaml' }; monaco.editor.setModelLanguage(monacoEditor.getModel(), map[ext] || 'plaintext'); }
 
-// Breadcrumbs
-function renderBreadcrumbs(path) { if(!breadcrumb) return; breadcrumb.innerHTML = ''; const parts = path.split('/').filter(p => p); let currentPath = ''; const home = document.createElement('a'); home.href = '#'; home.textContent = '🏠'; home.onclick = (e) => { e.preventDefault(); listDir('/'); }; breadcrumb.appendChild(home); for (const part of parts) { currentPath += `/${part}`; const sep = document.createElement('span'); sep.textContent = ' > '; breadcrumb.appendChild(sep); const link = document.createElement('a'); link.href = '#'; link.textContent = part; ((p) => { link.onclick = (e) => { e.preventDefault(); listDir(p); }; })(currentPath); breadcrumb.appendChild(link); } }
+// helper to send commands to terminal (Socket.IO or HTTP fallback)
+function sendToTerminal(cmd){
+  if(typeof io === 'function'){
+    if(activeTid) socket.emit('terminal_input', { tid: activeTid, data: cmd });
+  } else {
+    httpTerm.send(cmd);
+  }
+}
+
+function safeCd(path){
+  const p = path.replace(/"/g,'\\"');
+  sendToTerminal(`cd "${p}" && ls\n`);
+}
+
+// update breadcrumb to also cd terminal
+function renderBreadcrumbs(path) { if(!breadcrumb) return; breadcrumb.innerHTML = ''; const parts = path.split('/').filter(p => p); let currentPath = ''; const home = document.createElement('a'); home.href = '#'; home.textContent = '🏠'; home.onclick = (e) => { e.preventDefault(); listDir('/'); safeCd('/'); }; breadcrumb.appendChild(home); for (const part of parts) { currentPath += `/${part}`; const sep = document.createElement('span'); sep.textContent = ' > '; breadcrumb.appendChild(sep); const link = document.createElement('a'); link.href = '#'; link.textContent = part; ((p) => { link.onclick = (e) => { e.preventDefault(); listDir(p); safeCd(p); }; })(currentPath); breadcrumb.appendChild(link); } }
 
 // Hidden files toggle
 let showHidden = localStorage.getItem('showHidden') === '1';
@@ -156,7 +164,8 @@ if(hiddenBtn){ hiddenBtn.textContent = `Hidden: ${showHidden?'On':'Off'}`; hidde
 // Directory list without filtering hidden by default (Termux)
 function listDir(path){ const url = path ? `/api/list?path=${encodeURIComponent(path)}` : '/api/list'; fetch(url).then(r=>r.json()).then(res=>{ if(res.error){ toast(res.error); return; } cwd = res.cwd; localStorage.setItem('cwd', cwd); renderBreadcrumbs(cwd); let items = res.items || []; if(!showHidden){ items = items.filter(it=>!it.name.startsWith('.')); } renderFilesVirtual(items); }).catch(err=>{ console.error('list error', err); toast('Gagal load list'); }); }
 
-function renderFilesVirtual(items){ if(!fileListBody||!fileListContainer) return; fileListBody.innerHTML=''; const rowHeight=28; const container = fileListContainer; const total=items.length; const viewport=()=>{ const visible = Math.ceil(container.clientHeight/rowHeight)+10; const scrollTop = container.scrollTop; const start = Math.max(0, Math.floor(scrollTop/rowHeight)-5); const end = Math.min(total, start+visible); fileListBody.innerHTML=''; const topH = start*rowHeight; const bottomH = (total-end)*rowHeight; const topTr=document.createElement('tr'); topTr.style.height=topH+'px'; fileListBody.appendChild(topTr); for(let i=start;i<end;i++){ const f=items[i]; const row = fileListBody.insertRow(); row.className = f.is_dir ? 'fe-folder' : 'fe-file'; const fullPath = cwd.replace(/\/+$/,"")+"/"+f.name; const nameCell=row.insertCell(); nameCell.textContent=(f.is_dir?"📁 ":"📄 ")+f.name; nameCell.onclick = f.is_dir ? ()=>listDir(fullPath) : ()=>openFile(fullPath, f); row.insertCell().textContent=f.size; row.insertCell().textContent=f.modified; const menuBtn=document.createElement('button'); menuBtn.textContent='…'; menuBtn.className='ctx-menu-btn'; menuBtn.onclick=e=>{ e.stopPropagation(); contextTarget={ path: fullPath, is_dir: f.is_dir, is_txt: f.is_txt, name: f.name }; showContextMenu(e); const rect=e.target.getBoundingClientRect(); positionContextMenu(contextMenu, rect); document.querySelector('[data-action="run"]').style.display = (contextTarget.is_txt && (contextTarget.name.endsWith('.py') || contextTarget.name.endsWith('.sh'))) ? 'block' : 'none'; document.querySelector('[data-action="download"]').style.display = contextTarget.is_dir ? 'none' : 'block'; }; row.insertCell().appendChild(menuBtn); } const bottomTr=document.createElement('tr'); bottomTr.style.height=bottomH+'px'; fileListBody.appendChild(bottomTr); }; container.onscroll=viewport; viewport(); }
+function renderFilesVirtual(items){ if(!fileListBody||!fileListContainer) return; fileListBody.innerHTML=''; const rowHeight=28; const container = fileListContainer; const total=items.length; const viewport=()=>{ const visible = Math.ceil(container.clientHeight/rowHeight)+10; const scrollTop = container.scrollTop; const start = Math.max(0, Math.floor(scrollTop/rowHeight)-5); const end = Math.min(total, start+visible); fileListBody.innerHTML=''; const topH = start*rowHeight; const bottomH = (total-end)*rowHeight; const topTr=document.createElement('tr'); topTr.style.height=topH+'px'; fileListBody.appendChild(topTr); if(cwd!=="/"){ const up = cwd.replace(/\/+$/,'').replace(/\/[^\/]+$/,'')||"/"; const row=fileListBody.insertRow(); row.className='fe-folder'; const cell=row.insertCell(); cell.colSpan=4; cell.innerHTML='⬅️ ..'; cell.onclick=()=>{ listDir(up); safeCd(up); }; }
+  for(let i=start;i<end;i++){ const f=items[i]; const row = fileListBody.insertRow(); row.className = f.is_dir ? 'fe-folder' : 'fe-file'; const fullPath = cwd.replace(/\/+$/,"")+"/"+f.name; const nameCell=row.insertCell(); nameCell.textContent=(f.is_dir?"📁 ":"📄 ")+f.name; nameCell.onclick = f.is_dir ? ()=>{ listDir(fullPath); safeCd(fullPath);} : ()=>openFile(fullPath, f); row.insertCell().textContent=f.size; row.insertCell().textContent=f.modified; const menuBtn=document.createElement('button'); menuBtn.textContent='…'; menuBtn.className='ctx-menu-btn'; menuBtn.onclick=e=>{ e.stopPropagation(); contextTarget={ path: fullPath, is_dir: f.is_dir, is_txt: f.is_txt, name: f.name }; contextMenu.style.display='flex'; positionContextMenu(contextMenu, e.target.getBoundingClientRect()); document.querySelector('[data-action="run"]').style.display = (contextTarget.is_txt && (contextTarget.name.endsWith('.py') || contextTarget.name.endsWith('.sh'))) ? 'block' : 'none'; document.querySelector('[data-action="download"]').style.display = contextTarget.is_dir ? 'none' : 'block'; }; row.insertCell().appendChild(menuBtn); } const bottomTr=document.createElement('tr'); bottomTr.style.height=bottomH+'px'; fileListBody.appendChild(bottomTr); }; container.onscroll=viewport; viewport(); }
 
 // File open/save
 function openFile(path, meta){ activeFilePath = path; if(topbarTitle) topbarTitle.textContent = path; if(meta && meta.is_img){ previewFile(path, meta); return; } fetch(`/api/read-file?path=${encodeURIComponent(path)}`).then(r=>r.json()).then(res=>{ if(!res.ok){ toast(res.error||'Gagal membuka file'); return; } if(monacoEditor){ monacoEditor.setValue(res.data||''); setEditorLanguageByExt(path); } }).catch(err=>{ console.error('read error', err); toast('Gagal membuka file'); }); }
@@ -181,7 +190,7 @@ document.getElementById("fe-upload")?.addEventListener('change', function(){ con
 if (fileListContainer) { fileListContainer.ondragover = e => {e.preventDefault();}; fileListContainer.ondrop = e => { e.preventDefault(); const files = e.dataTransfer.files; if(!files.length) return; const fd = new FormData(); for (let f of files) fd.append('file', f); fetch(`/api/upload?path=${encodeURIComponent(cwd)}`,{method:"POST",body:fd}).then(r=>r.json()).then(res=>{ if(res.ok){ toast("Upload berhasil"); listDir(cwd);} else toast(res.error||"Gagal upload"); }).catch(()=>toast('Gagal upload')); }; }
 
 // Custom path
-document.getElementById("fe-goto")?.addEventListener('click', ()=>{ const input=document.getElementById("custom-path"); const p = input && input.value; if(!p) return; fetch('/api/setcwd',{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({path:p})}).then(r=>r.json()).then(res=>{ if(res.ok){ listDir(p); toast("Pindah directory!"); } else toast("Path tidak valid"); }).catch(()=>toast('Gagal pindah')); });
+document.getElementById("fe-goto")?.addEventListener('click', ()=>{ const input=document.getElementById("custom-path"); const p = input && input.value; if(!p) return; fetch('/api/setcwd',{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({path:p})}).then(r=>r.json()).then(res=>{ if(res.ok){ listDir(p); safeCd(p); toast("Pindah directory!"); } else toast("Path tidak valid"); }).catch(()=>toast('Gagal pindah')); });
 
 document.getElementById("fe-new-file")?.addEventListener('click', ()=>{ const name = prompt("Enter new file name:"); if(!name) return; fetch('/api/create-file',{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({path:cwd, name:name})}).then(r=>r.json()).then(res=>{ if(res.ok) listDir(cwd); else toast(res.error || "Gagal membuat file"); }).catch(()=>toast('Gagal membuat file')); });
 document.getElementById("fe-new-dir")?.addEventListener('click', ()=>{ const name = prompt("Enter new folder name:"); if(!name) return; fetch('/api/create-dir',{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({path:cwd, name:name})}).then(r=>r.json()).then(res=>{ if(res.ok) listDir(cwd); else toast(res.error || "Gagal membuat folder"); }).catch(()=>toast('Gagal membuat folder')); });
