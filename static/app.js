@@ -2,11 +2,13 @@
 const socket = io();
 
 // State
-let cwd = "";
+let cwd = localStorage.getItem('cwd') || "";
 let activeFilePath = null;
 let monacoEditor = null;
-let terminals = {}; // tid -> {term}
+let terminals = {}; // tid -> {term, fitAddon, searchAddon}
 let activeTid = null;
+let theme = localStorage.getItem('theme') || 'dark';
+if(theme==='light') document.body.setAttribute('data-theme','light');
 
 function toast(msg) { const t=document.getElementById("toast"); t.textContent=msg;t.style.display="block"; setTimeout(()=>{t.style.display="none";},2500); }
 
@@ -22,25 +24,31 @@ const editorContainer = document.getElementById("editor");
 const topbarTitle = document.getElementById("active-file");
 const saveBtn = document.getElementById("save-btn");
 const refreshBtn = document.getElementById("fe-refresh");
+const themeToggle = document.getElementById("theme-toggle");
 
 // Terminal tabs bar
 const tabsBar = document.createElement('div');
-tabsBar.style.height='32px'; tabsBar.style.display='flex'; tabsBar.style.alignItems='center'; tabsBar.style.background='#15181d'; tabsBar.style.borderBottom='1px solid #292c31';
+tabsBar.style.height='32px'; tabsBar.style.display='flex'; tabsBar.style.alignItems='center'; tabsBar.style.background='var(--panel2)'; tabsBar.style.borderBottom='1px solid var(--border)';
 const newTabBtn = document.createElement('button'); newTabBtn.textContent = '+'; newTabBtn.style.margin='0 6px';
 tabsBar.appendChild(newTabBtn);
 termContainer.prepend(tabsBar);
 
 function createXterm(){
-  const t = new Terminal({ theme:{background:"#181a20"}, fontSize:14, scrollback: 5000 });
-  return t;
+  const t = new Terminal({ theme:{background:getComputedStyle(document.body).getPropertyValue('--bg').trim()||"#181a20"}, fontSize:14, scrollback: 5000 });
+  try{
+    const fitAddon = new FitAddon.FitAddon();
+    const webLinks = new WebLinksAddon.WebLinksAddon();
+    const searchAddon = new SearchAddon.SearchAddon();
+    t.loadAddon(fitAddon); t.loadAddon(webLinks); t.loadAddon(searchAddon);
+    return { t, fitAddon, searchAddon };
+  }catch{ return { t, fitAddon:null, searchAddon:null }; }
 }
 
 function renderTabs(){
-  // remove old tab entries except the + button
   [...tabsBar.querySelectorAll('.ttab')].forEach(n=>n.remove());
   Object.keys(terminals).forEach(tid=>{
     const b = document.createElement('button'); b.className='ttab'; b.textContent = `sh ${tid}`;
-    b.style.margin='0 4px'; b.style.padding='3px 6px'; b.style.background = (tid===activeTid?'#23272e':'#1b1e23'); b.style.color='#ddd'; b.onclick=()=>activateTid(tid);
+    b.style.margin='0 4px'; b.style.padding='3px 6px'; b.style.background = (tid===activeTid?'#23272e':'#1b1e23'); b.style.color='var(--fg)'; b.onclick=()=>activateTid(tid);
     const close = document.createElement('span'); close.textContent=' ×'; close.style.cursor='pointer'; close.onclick=(e)=>{ e.stopPropagation(); closeTid(tid); };
     b.appendChild(close);
     tabsBar.insertBefore(b, newTabBtn);
@@ -51,19 +59,20 @@ function mountTerminal(tid){
   termContainer.querySelector('#terminal')?.remove();
   const node = document.createElement('div'); node.id='terminal'; node.style.position='absolute'; node.style.left=0; node.style.right=0; node.style.top='32px'; node.style.bottom=0;
   termContainer.appendChild(node);
-  const t = terminals[tid].term;
+  const ent = terminals[tid]; const t = ent.term;
   t.open(node);
+  setTimeout(()=>{ try{ ent.fitAddon && ent.fitAddon.fit(); }catch{} }, 0);
   t.focus();
 }
 
-function activateTid(tid){ activeTid = tid; renderTabs(); mountTerminal(tid); }
+function activateTid(tid){ activeTid = tid; renderTabs(); mountTerminal(tid); localStorage.setItem('activeTid', tid); }
 
 function closeTid(tid){
   socket.emit('terminal_close', { tid });
   const wasActive = (tid===activeTid);
   try { terminals[tid].term.dispose(); } catch {}
   delete terminals[tid];
-  if(wasActive){ const first = Object.keys(terminals)[0]; if(first){ activateTid(first); } else { termContainer.querySelector('#terminal')?.remove(); } }
+  if(wasActive){ const first = Object.keys(terminals)[0]; if(first){ activateTid(first); } else { termContainer.querySelector('#terminal')?.remove(); activeTid=null; localStorage.removeItem('activeTid'); } }
   renderTabs();
 }
 
@@ -71,17 +80,15 @@ newTabBtn.onclick = ()=> socket.emit('terminal_new');
 
 // Socket handlers
 socket.on('terminal_started', ({tid})=>{
-  const t = createXterm();
+  const { t, fitAddon, searchAddon } = createXterm();
   t.onData(d => socket.emit('terminal_input', { tid, data: d }));
-  terminals[tid] = { term: t };
+  terminals[tid] = { term: t, fitAddon, searchAddon };
   if(!activeTid){ activeTid = tid; }
   renderTabs();
   if(activeTid===tid){ mountTerminal(tid); }
 });
 
-socket.on('terminal_output', ({tid, data})=>{
-  const ent = terminals[tid]; if(ent){ ent.term.write(data); }
-});
+socket.on('terminal_output', ({tid, data})=>{ const ent = terminals[tid]; if(ent){ ent.term.write(data); } });
 
 // Shortcuts
 document.addEventListener('keydown', e=>{
@@ -89,80 +96,43 @@ document.addEventListener('keydown', e=>{
   if(e.key==="Escape"){ fileExplorer.classList.add("collapsed"); document.getElementById("preview-modal").style.display="none"; }
   if(e.ctrlKey && (e.key==="s" || e.key==="S")){ e.preventDefault(); saveActiveFile(); }
   if(e.ctrlKey && (e.key==="p" || e.key==="P")){ e.preventDefault(); openQuickOpen(); }
+  if(e.ctrlKey && (e.key==="f" || e.key==="F")){ // terminal search
+    const ent=terminals[activeTid]; if(ent&&ent.searchAddon){ const q=prompt('Find in terminal:'); if(q){ try{ ent.searchAddon.findNext(q); }catch{} } }
+  }
 });
+
+// Theme toggle
+themeToggle.onclick = ()=>{
+  theme = (theme==='dark'?'light':'dark');
+  if(theme==='light') document.body.setAttribute('data-theme','light'); else document.body.removeAttribute('data-theme');
+  localStorage.setItem('theme', theme);
+  // refresh terminal bg theme
+  Object.values(terminals).forEach(ent=>{ try{ ent.fitAddon && ent.fitAddon.fit(); }catch{} });
+};
 
 // Monaco
 window.require && window.require.config({ paths: { 'vs': 'https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.51.0/min/vs' } });
 window.require && window.require(['vs/editor/editor.main'], function(){
-  monacoEditor = monaco.editor.create(editorContainer, {
-    value: '', language: 'plaintext', theme: 'vs-dark', automaticLayout: true,
-    fontFamily: 'Fira Code, Fira Mono, monospace', fontSize: 14, minimap: { enabled: false }, renderWhitespace: 'selection', wordWrap: 'on'
-  });
+  monacoEditor = monaco.editor.create(editorContainer, { value: '', language: 'plaintext', theme: theme==='light'?'vs':'vs-dark', automaticLayout: true, fontFamily: 'Fira Code, Fira Mono, monospace', fontSize: 14, minimap: { enabled: false }, renderWhitespace: 'selection', wordWrap: 'on' });
 });
 
-function setEditorLanguageByExt(path){
-  if(!window.monaco || !monacoEditor) return;
-  const ext = (path.split('.').pop()||'').toLowerCase();
-  const map = { js:'javascript', ts:'typescript', py:'python', json:'json', md:'markdown', html:'html', css:'css', sh:'shell', yml:'yaml', yaml:'yaml' };
-  monaco.editor.setModelLanguage(monacoEditor.getModel(), map[ext] || 'plaintext');
-}
+function setEditorLanguageByExt(path){ if(!window.monaco || !monacoEditor) return; const ext = (path.split('.').pop()||'').toLowerCase(); const map = { js:'javascript', ts:'typescript', py:'python', json:'json', md:'markdown', html:'html', css:'css', sh:'shell', yml:'yaml', yaml:'yaml' }; monaco.editor.setModelLanguage(monacoEditor.getModel(), map[ext] || 'plaintext'); }
 
 // Breadcrumbs
-function renderBreadcrumbs(path) {
-  breadcrumb.innerHTML = '';
-  const parts = path.split('/').filter(p => p);
-  let currentPath = '';
-  const home = document.createElement('a'); home.href = '#'; home.textContent = '🏠'; home.onclick = (e) => { e.preventDefault(); listDir('/'); };
-  breadcrumb.appendChild(home);
-  for (const part of parts) {
-    currentPath += `/${part}`; const sep = document.createElement('span'); sep.textContent = ' > '; breadcrumb.appendChild(sep);
-    const link = document.createElement('a'); link.href = '#'; link.textContent = part; ((p) => { link.onclick = (e) => { e.preventDefault(); listDir(p); }; })(currentPath);
-    breadcrumb.appendChild(link);
-  }
-}
+function renderBreadcrumbs(path) { breadcrumb.innerHTML = ''; const parts = path.split('/').filter(p => p); let currentPath = ''; const home = document.createElement('a'); home.href = '#'; home.textContent = '🏠'; home.onclick = (e) => { e.preventDefault(); listDir('/'); }; breadcrumb.appendChild(home); for (const part of parts) { currentPath += `/${part}`; const sep = document.createElement('span'); sep.textContent = ' > '; breadcrumb.appendChild(sep); const link = document.createElement('a'); link.href = '#'; link.textContent = part; ((p) => { link.onclick = (e) => { e.preventDefault(); listDir(p); }; })(currentPath); breadcrumb.appendChild(link); } }
 
-// Directory list
-function listDir(path){
-  const url = path ? `/api/list?path=${encodeURIComponent(path)}` : '/api/list';
-  fetch(url).then(r=>r.json()).then(res=>{
-    if(res.error){ toast(res.error); return; }
-    cwd = res.cwd; renderBreadcrumbs(cwd); fileListBody.innerHTML = "";
-    if(cwd!=="/"){ const up = cwd.replace(/\/+$/,'').replace(/\/[^\/]+$/,'')||"/"; const row = fileListBody.insertRow(); row.className = 'fe-folder'; const cell = row.insertCell(); cell.colSpan = 4; cell.innerHTML = "⬅️ .."; cell.onclick = ()=>listDir(up); }
-    res.items.forEach(f=>{
-      const row = fileListBody.insertRow(); row.className = f.is_dir ? "fe-folder" : "fe-file";
-      const fullPath = cwd.replace(/\/+$/,"")+"/"+f.name;
-      const nameCell = row.insertCell(); nameCell.textContent = (f.is_dir ? "📁 " : "📄 ") + f.name; nameCell.onclick = f.is_dir ? ()=>listDir(fullPath) : ()=>openFile(fullPath, f);
-      row.insertCell().textContent = f.size; row.insertCell().textContent = f.modified;
-      const menuBtn = document.createElement("button"); menuBtn.textContent = "…"; menuBtn.className = "ctx-menu-btn";
-      menuBtn.onclick = e => { e.stopPropagation(); contextTarget = { path: fullPath, is_dir: f.is_dir, is_txt: f.is_txt, name: f.name }; contextMenu.style.display="flex"; const rect = e.target.getBoundingClientRect(); contextMenu.style.top = `${rect.bottom}px`; contextMenu.style.left = `${rect.left - contextMenu.offsetWidth + rect.width}px`; document.querySelector('[data-action="run"]').style.display = (contextTarget.is_txt && (contextTarget.name.endsWith(".py") || contextTarget.name.endsWith(".sh"))) ? 'block' : 'none'; document.querySelector('[data-action="download"]').style.display = contextTarget.is_dir ? 'none' : 'block'; };
-      row.insertCell().appendChild(menuBtn);
-    });
-  });
-}
+// Directory list with simple virtualization
+function listDir(path){ const url = path ? `/api/list?path=${encodeURIComponent(path)}` : '/api/list'; fetch(url).then(r=>r.json()).then(res=>{ if(res.error){ toast(res.error); return; } cwd = res.cwd; localStorage.setItem('cwd', cwd); renderBreadcrumbs(cwd); renderFilesVirtual(res.items || []); }); }
 
-function openFile(path, meta){
-  activeFilePath = path; topbarTitle.textContent = path;
-  if(meta && meta.is_img){ previewFile(path, meta); return; }
-  fetch(`/api/read-file?path=${encodeURIComponent(path)}`).then(r=>r.json()).then(res=>{
-    if(!res.ok){ toast(res.error||'Gagal membuka file'); return; }
-    if(monacoEditor){ monacoEditor.setValue(res.data||''); setEditorLanguageByExt(path); }
-  });
-}
+function renderFilesVirtual(items){ fileListBody.innerHTML=''; const rowHeight=28; const container = fileListContainer; const total=items.length; const spacerTop=document.createElement('tr'); const spacerBottom=document.createElement('tr'); spacerTop.style.height='0px'; spacerBottom.style.height='0px'; fileListBody.appendChild(spacerTop); const viewport=()=>{ const visible = Math.ceil(container.clientHeight/rowHeight)+10; const scrollTop = container.scrollTop; const start = Math.max(0, Math.floor(scrollTop/rowHeight)-5); const end = Math.min(total, start+visible); fileListBody.innerHTML=''; const topH = start*rowHeight; const bottomH = (total-end)*rowHeight; const topTr=document.createElement('tr'); topTr.style.height=topH+'px'; fileListBody.appendChild(topTr); for(let i=start;i<end;i++){ const f=items[i]; const row = fileListBody.insertRow(); row.className = f.is_dir ? 'fe-folder' : 'fe-file'; const fullPath = cwd.replace(/\/+$/,"")+"/"+f.name; const nameCell=row.insertCell(); nameCell.textContent=(f.is_dir?"📁 ":"📄 ")+f.name; nameCell.onclick = f.is_dir ? ()=>listDir(fullPath) : ()=>openFile(fullPath, f); row.insertCell().textContent=f.size; row.insertCell().textContent=f.modified; const menuBtn=document.createElement('button'); menuBtn.textContent='…'; menuBtn.className='ctx-menu-btn'; menuBtn.onclick=e=>{ e.stopPropagation(); contextTarget={ path: fullPath, is_dir: f.is_dir, is_txt: f.is_txt, name: f.name }; contextMenu.style.display='flex'; const rect=e.target.getBoundingClientRect(); contextMenu.style.top=`${rect.bottom}px`; contextMenu.style.left=`${rect.left - contextMenu.offsetWidth + rect.width}px`; document.querySelector('[data-action="run"]').style.display = (contextTarget.is_txt && (contextTarget.name.endsWith('.py') || contextTarget.name.endsWith('.sh'))) ? 'block' : 'none'; document.querySelector('[data-action="download"]').style.display = contextTarget.is_dir ? 'none' : 'block'; }; row.insertCell().appendChild(menuBtn); } const bottomTr=document.createElement('tr'); bottomTr.style.height=bottomH+'px'; fileListBody.appendChild(bottomTr); }; container.onscroll=viewport; viewport(); }
 
+// File open/save
+function openFile(path, meta){ activeFilePath = path; topbarTitle.textContent = path; if(meta && meta.is_img){ previewFile(path, meta); return; } fetch(`/api/read-file?path=${encodeURIComponent(path)}`).then(r=>r.json()).then(res=>{ if(!res.ok){ toast(res.error||'Gagal membuka file'); return; } if(monacoEditor){ monacoEditor.setValue(res.data||''); setEditorLanguageByExt(path); } }); }
 function saveActiveFile(){ if(!activeFilePath){ toast('Tidak ada file aktif'); return; } const data = monacoEditor ? monacoEditor.getValue() : ''; fetch('/api/save-file',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ path: activeFilePath, data })}).then(r=>r.json()).then(res=>{ if(res.ok){ toast('Tersimpan'); listDir(cwd); } else toast(res.error||'Gagal menyimpan'); }); }
 
 // Context menu
 let contextTarget = null;
-contextMenu.addEventListener('click', e => {
-  if(!contextTarget || !e.target.matches('[data-action]')) return;
-  const action = e.target.dataset.action; const { path } = contextTarget;
-  switch(action){
-    case 'delete': if(!confirm(`Are you sure you want to delete ${path}?`)) return; fetch('/api/delete',{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({path:path})}).then(r=>r.json()).then(res=>{ if(res.ok) listDir(cwd); else toast(res.error||"Gagal menghapus"); }); break;
-    case 'rename': const newName = prompt(`Enter new name for ${path}:`, path.split('/').pop()); if(!newName) return; fetch('/api/rename',{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({old_path:path, new_name:newName})}).then(r=>r.json()).then(res=>{ if(res.ok) listDir(cwd); else toast(res.error||"Gagal rename"); }); break;
-    case 'download': window.open(`/api/download?path=${encodeURIComponent(path)}`); break;
-    case 'run': const cmd = path.endsWith('.py') ? 'python' : 'bash'; if(activeTid) socket.emit('terminal_input', { tid: activeTid, data: `${cmd} "${path}"\n` }); break;
-  }
-});
+contextMenu.addEventListener('click', e => { if(!contextTarget || !e.target.matches('[data-action]')) return; const action = e.target.dataset.action; const { path } = contextTarget; switch(action){ case 'delete': if(!confirm(`Are you sure you want to delete ${path}?`)) return; fetch('/api/delete',{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({path:path})}).then(r=>r.json()).then(res=>{ if(res.ok) listDir(cwd); else toast(res.error||"Gagal menghapus"); }); break; case 'rename': const newName = prompt(`Enter new name for ${path}:`, path.split('/').pop()); if(!newName) return; fetch('/api/rename',{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({old_path:path, new_name:newName})}).then(r=>r.json()).then(res=>{ if(res.ok) listDir(cwd); else toast(res.error||"Gagal rename"); }); break; case 'download': window.open(`/api/download?path=${encodeURIComponent(path)}`); break; case 'run': const cmd = path.endsWith('.py') ? 'python' : 'bash'; if(activeTid) socket.emit('terminal_input', { tid: activeTid, data: `${cmd} "${path}"\n` }); break; } });
 
 document.addEventListener('click', ()=>contextMenu.style.display="none");
 feToggle.onclick = ()=> fileExplorer.classList.toggle("collapsed");
@@ -187,7 +157,7 @@ document.getElementById("fe-new-dir").onclick = ()=>{ const name = prompt("Enter
 function escapeHtml(str){ return str.replace(/[&<>'"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' })[c]); }
 
 // Splitter
-(function(){ const split = document.getElementById('h-split'); let dragging=false,startY=0,startTop=0,startBottom=0; split.addEventListener('mousedown',(e)=>{ dragging=true; startY=e.clientY; startTop=editorContainer.getBoundingClientRect().height; startBottom=termContainer.getBoundingClientRect().height; document.body.style.cursor='row-resize'; }); window.addEventListener('mousemove',(e)=>{ if(!dragging) return; const dy=e.clientY-startY; const newTop=Math.max(120,startTop+dy); const newBottom=Math.max(120,startBottom-dy); editorContainer.style.flexBasis=newTop+'px'; termContainer.style.flexBasis=newBottom+'px'; }); window.addEventListener('mouseup',()=>{ if(dragging){ dragging=false; document.body.style.cursor=''; } }); })();
+(function(){ const split = document.getElementById('h-split'); let dragging=false,startY=0,startTop=0,startBottom=0; split.addEventListener('mousedown',(e)=>{ dragging=true; startY=e.clientY; startTop=editorContainer.getBoundingClientRect().height; startBottom=termContainer.getBoundingClientRect().height; document.body.style.cursor='row-resize'; }); window.addEventListener('mousemove',(e)=>{ if(!dragging) return; const dy=e.clientY-startY; const newTop=Math.max(120,startTop+dy); const newBottom=Math.max(120,startBottom-dy); editorContainer.style.flexBasis=newTop+'px'; termContainer.style.flexBasis=newBottom+'px'; Object.values(terminals).forEach(ent=>{ try{ ent.fitAddon && ent.fitAddon.fit(); }catch{} }); }); window.addEventListener('mouseup',()=>{ if(dragging){ dragging=false; document.body.style.cursor=''; } }); })();
 
 // Quick Open
 const qo = document.createElement('div'); qo.style.position='fixed'; qo.style.left='50%'; qo.style.top='20%'; qo.style.transform='translateX(-50%)'; qo.style.background='#222'; qo.style.border='1px solid #444'; qo.style.padding='8px'; qo.style.display='none'; qo.style.zIndex=2000; qo.style.width='600px';
@@ -195,21 +165,16 @@ const qoInput = document.createElement('input'); qoInput.type='text'; qoInput.pl
 const qoList = document.createElement('div'); qoList.style.maxHeight='50vh'; qoList.style.overflow='auto'; qoList.style.marginTop='6px';
 qo.appendChild(qoInput); qo.appendChild(qoList); document.body.appendChild(qo);
 
-function openQuickOpen(){ qo.style.display='block'; qoInput.value=''; qoList.innerHTML=''; qoInput.focus(); }
+function openQuickOpen(){ qo.style.display='block'; qoInput.value=''; qoList.innerHTML=''; qoInput.focus(); selectedIdx=-1; }
 function closeQuickOpen(){ qo.style.display='none'; }
 
-oqBind(); function oqBind(){
-  let timer=null; let results=[];
-  qoInput.addEventListener('keydown', (e)=>{ if(e.key==='Escape'){ closeQuickOpen(); } if(e.key==='Enter'){ const item=qoList.querySelector('.qo-item'); if(item){ const p=item.dataset.path; closeQuickOpen(); // open
-      fetch('/api/list?path='+encodeURIComponent(p)).then(r=>r.json()).then(res=>{ if(res.items){ listDir(p); } else { openFile(p,{is_img:false}); } }).catch(()=>openFile(p,{is_img:false})); } });
-  qoInput.addEventListener('input', ()=>{ clearTimeout(timer); const q=qoInput.value.trim(); if(!q){ qoList.innerHTML=''; return; } timer=setTimeout(()=>{ fetch('/api/search?q='+encodeURIComponent(q)).then(r=>r.json()).then(res=>{ results=res.results||[]; qoList.innerHTML=''; results.forEach(r=>{ const div=document.createElement('div'); div.className='qo-item'; div.dataset.path=r.path; div.textContent=r.path; div.style.padding='4px 6px'; div.style.cursor='pointer'; div.onmouseenter=()=>{ [...qoList.children].forEach(c=>c.style.background=''); div.style.background='#2a2f3a'; }; div.onclick=()=>{ closeQuickOpen(); if(r.is_dir) listDir(r.path); else openFile(r.path,{is_img:false}); }; qoList.appendChild(div); }); }); }, 200); });
-}
+let selectedIdx=-1; let lastResults=[]; function renderQO(){ qoList.innerHTML=''; lastResults.forEach((r,i)=>{ const div=document.createElement('div'); div.className='qo-item'; div.dataset.path=r.path; div.textContent=r.path; div.style.padding='4px 6px'; div.style.cursor='pointer'; if(i===selectedIdx) div.style.background='#2a2f3a'; div.onmouseenter=()=>{ selectedIdx=i; renderQO(); }; div.onclick=()=>{ openQOItem(r); }; qoList.appendChild(div); }); }
+function openQOItem(r){ closeQuickOpen(); if(r.is_dir) listDir(r.path); else openFile(r.path,{is_img:false}); }
 
-// Responsive
-if(window.innerWidth<700) fileExplorer.classList.add("collapsed");
-document.addEventListener('keydown', e=>{ if(e.ctrlKey && e.key==="b"){ fileExplorer.classList.toggle("collapsed"); } });
+(function(){ let timer=null; qoInput.addEventListener('keydown',(e)=>{ if(e.key==='Escape'){ closeQuickOpen(); } else if(e.key==='ArrowDown'){ selectedIdx=Math.min((selectedIdx+1),(lastResults.length-1)); renderQO(); e.preventDefault(); } else if(e.key==='ArrowUp'){ selectedIdx=Math.max((selectedIdx-1),0); renderQO(); e.preventDefault(); } else if(e.key==='Enter'){ if(selectedIdx>=0&&lastResults[selectedIdx]) openQOItem(lastResults[selectedIdx]); else { const item=qoList.querySelector('.qo-item'); if(item){ openQOItem({ path:item.dataset.path, is_dir:false }); } } } }); qoInput.addEventListener('input', ()=>{ clearTimeout(timer); const q=qoInput.value.trim(); if(!q){ qoList.innerHTML=''; lastResults=[]; return; } timer=setTimeout(()=>{ fetch('/api/search?q='+encodeURIComponent(q)).then(r=>r.json()).then(res=>{ lastResults=res.results||[]; selectedIdx=lastResults.length?0:-1; renderQO(); }); }, 200); }); })();
 
-document.addEventListener('click', ()=>contextMenu.style.display="none");
+// Window resize -> fit terminal
+window.addEventListener('resize', ()=>{ Object.values(terminals).forEach(ent=>{ try{ ent.fitAddon && ent.fitAddon.fit(); }catch{} }); });
 
 // Init
-listDir();
+listDir(cwd);
