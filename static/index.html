@@ -16,8 +16,20 @@
       <button id="fe-new-file">+File</button>
       <button id="fe-new-dir">+Folder</button>
     </div>
-    <div id="cwd"></div>
-    <div id="file-list"></div>
+    <div id="cwd-breadcrumb"></div>
+    <div id="file-list-container">
+      <table id="file-list-table">
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Size</th>
+            <th>Modified</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody id="file-list-body"></tbody>
+      </table>
+    </div>
     <input type="file" id="fe-upload" style="display:none" multiple>
     <button id="fe-upload-btn">Upload</button>
   </div>

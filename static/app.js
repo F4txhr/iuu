@@ -25,8 +25,8 @@ document.addEventListener('keydown', e=>{
 
 // File explorer
 const fileExplorer = document.getElementById("file-explorer");
-const fileList = document.getElementById("file-list");
-const cwdDiv = document.getElementById("cwd");
+const fileListBody = document.getElementById("file-list-body");
+const breadcrumb = document.getElementById("cwd-breadcrumb");
 const contextMenu = document.getElementById("context-menu");
 let contextTarget = null; // will store path for context menu
 // FE toggle button (floating, di luar explorer)
@@ -68,6 +68,34 @@ contextMenu.addEventListener('click', e => {
   }
 });
 
+function renderBreadcrumbs(path) {
+    breadcrumb.innerHTML = '';
+    const parts = path.split('/').filter(p => p);
+    let currentPath = '';
+
+    const home = document.createElement('a');
+    home.href = '#';
+    home.textContent = '🏠';
+    home.onclick = (e) => { e.preventDefault(); listDir('/'); };
+    breadcrumb.appendChild(home);
+
+    for (const part of parts) {
+        currentPath += `/${part}`;
+        const separator = document.createElement('span');
+        separator.textContent = ' > ';
+        breadcrumb.appendChild(separator);
+
+        const link = document.createElement('a');
+        link.href = '#';
+        link.textContent = part;
+        // Use a closure to capture the path at each iteration
+        ((p) => {
+            link.onclick = (e) => { e.preventDefault(); listDir(p); };
+        })(currentPath);
+        breadcrumb.appendChild(link);
+    }
+}
+
 // List directory
 function listDir(path){
   const url = path ? `/api/list?path=${encodeURIComponent(path)}` : '/api/list';
@@ -76,43 +104,49 @@ function listDir(path){
     .then(res=>{
       if(res.error){ toast(res.error); return; }
       cwd = res.cwd;
-      cwdDiv.textContent = cwd;
-      fileList.innerHTML = "";
+      renderBreadcrumbs(cwd);
+      fileListBody.innerHTML = ""; // Clear table body
       // Parent/back icon
       if(cwd!=="/"){
         const up = cwd.replace(/\/+$/,'').replace(/\/[^\/]+$/,'')||"/";
-        const back = document.createElement("div");
-        back.className = "fe-folder";
-        back.innerHTML = "⬅️ ..";
-        back.onclick = ()=>listDir(up);
-        fileList.appendChild(back);
+        const row = fileListBody.insertRow();
+        row.className = 'fe-folder';
+        const cell = row.insertCell();
+        cell.colSpan = 4;
+        cell.innerHTML = "⬅️ ..";
+        cell.onclick = ()=>listDir(up);
       }
       res.items.forEach(f=>{
-        const el = document.createElement("div");
-        el.className = f.is_dir ? "fe-folder" : "fe-file";
+        const row = fileListBody.insertRow();
+        row.className = f.is_dir ? "fe-folder" : "fe-file";
         const fullPath = cwd.replace(/\/+$/,"")+"/"+f.name;
 
-        const text = document.createElement('span');
-        text.textContent = f.is_dir ? "📁 "+f.name : "📄 "+f.name;
-        text.onclick = f.is_dir ? ()=>listDir(fullPath) : ()=>previewFile(fullPath, f);
-        el.appendChild(text);
+        // Name
+        const nameCell = row.insertCell();
+        nameCell.textContent = (f.is_dir ? "📁 " : "📄 ") + f.name;
+        nameCell.onclick = f.is_dir ? ()=>listDir(fullPath) : ()=>previewFile(fullPath, f);
 
+        // Size
+        row.insertCell().textContent = f.size;
+        // Modified
+        row.insertCell().textContent = f.modified;
+
+        // Actions
         const menuBtn = document.createElement("button");
         menuBtn.textContent = "…";
         menuBtn.className = "ctx-menu-btn";
         menuBtn.onclick = e => {
           e.stopPropagation();
-          contextTarget = { path: fullPath, is_dir: f.is_dir, is_txt: f.is_txt };
+          contextTarget = { path: fullPath, is_dir: f.is_dir, is_txt: f.is_txt, name: f.name };
           contextMenu.style.display="flex";
-          contextMenu.style.top = `${e.target.offsetTop + 20}px`;
-          contextMenu.style.left = `${e.target.offsetLeft - 50}px`;
+          const rect = e.target.getBoundingClientRect();
+          contextMenu.style.top = `${rect.bottom}px`;
+          contextMenu.style.left = `${rect.left - contextMenu.offsetWidth + rect.width}px`;
           // Hide/show run button
-          document.querySelector('[data-action="run"]').style.display = (f.is_txt && (f.name.endsWith(".py") || f.name.endsWith(".sh"))) ? 'block' : 'none';
-          document.querySelector('[data-action="download"]').style.display = f.is_dir ? 'none' : 'block';
+          document.querySelector('[data-action="run"]').style.display = (contextTarget.is_txt && (contextTarget.name.endsWith(".py") || contextTarget.name.endsWith(".sh"))) ? 'block' : 'none';
+          document.querySelector('[data-action="download"]').style.display = contextTarget.is_dir ? 'none' : 'block';
         };
-        el.appendChild(menuBtn);
-
-        fileList.appendChild(el);
+        row.insertCell().appendChild(menuBtn);
       });
     });
 }

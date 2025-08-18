@@ -1,6 +1,7 @@
 from flask import Flask, request, jsonify, send_from_directory, send_file
 from flask_socketio import SocketIO, emit
 import os, pty, select, threading, base64, shutil
+from datetime import datetime
 
 app = Flask(__name__, static_url_path='/static')
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
@@ -17,22 +18,34 @@ def index():
 def static_files(filename):
     return send_from_directory('static', filename)
 
+def format_size(size):
+    if size < 1024:
+        return f"{size} B"
+    for unit in ['KB', 'MB', 'GB', 'TB']:
+        size /= 1024
+        if size < 1024:
+            return f"{size:.1f} {unit}"
+    return f"{size:.1f} PB"
+
 # API: list directory
 @app.route('/api/list')
 def list_dir():
     path = request.args.get('path', cwd[0])
     if not path:
-        # Default ke home jika kosong (atau START_PATH)
         path = cwd[0] if cwd[0] else START_PATH
     try:
         items = []
         for name in os.listdir(path):
             full = os.path.join(path, name)
+            stat = os.stat(full)
+            is_dir = os.path.isdir(full)
             items.append({
                 "name": name,
-                "is_dir": os.path.isdir(full),
-                "is_img": name.lower().endswith(('.png','.jpg','.jpeg','.gif','.svg','.webp')),
-                "is_txt": name.lower().endswith(('.txt','.md','.py','.js','.json','.html','.css','.sh','.log','.csv'))
+                "is_dir": is_dir,
+                "is_img": not is_dir and name.lower().endswith(('.png','.jpg','.jpeg','.gif','.svg','.webp')),
+                "is_txt": not is_dir and name.lower().endswith(('.txt','.md','.py','.js','.json','.html','.css','.sh','.log','.csv')),
+                "size": format_size(stat.st_size) if not is_dir else "",
+                "modified": datetime.fromtimestamp(stat.st_mtime).strftime('%Y-%m-%d %H:%M:%S')
             })
         return jsonify({
             "cwd": os.path.abspath(path),
@@ -148,26 +161,58 @@ def delete_item():
     except Exception as e:
         return jsonify({"error": str(e)}), 400
 
-# Terminal PTY
-master, slave = pty.openpty()
-os.write(master, f"cd '{cwd[0]}'\n".encode())
+# --- Terminal PTY ---
+master_fd = None
+child_pid = None
 
-def read_pty():
+def setup_terminal():
+    global master_fd, child_pid
+    if child_pid:
+        return # Already started
+
+    (pid, fd) = pty.fork()
+    if pid == 0: # Child
+        # Start a new shell session
+        os.chdir(START_PATH)
+        os.execv('/bin/bash', ['/bin/bash'])
+    else: # Parent
+        child_pid = pid
+        master_fd = fd
+        # Optional: set an initial command or welcome message
+        # os.write(master_fd, b"echo 'Welcome to the web terminal!'\n")
+
+def read_and_forward_pty_output():
+    global master_fd
     while True:
-        rl, _, _ = select.select([master], [], [], 0.1)
-        if master in rl:
-            output = os.read(master, 1024).decode(errors='ignore')
-            socketio.emit('terminal_output', output)
+        if master_fd:
+            try:
+                select.select([master_fd], [], [], 0.1)
+                output = os.read(master_fd, 1024*20)
+                if output:
+                    socketio.emit('terminal_output', output.decode(errors='ignore'))
+            except Exception:
+                # Process might have died
+                socketio.emit('terminal_output', '\n--- Shell exited ---\n')
+                break
+        socketio.sleep(0.01)
+
+@socketio.on('connect')
+def connect():
+    if child_pid is None:
+        setup_terminal()
 
 @socketio.on('terminal_input')
 def terminal_input(data):
-    os.write(master, data.encode())
+    if master_fd:
+        os.write(master_fd, data.encode())
 
-# For shortcut: clear terminal
 @socketio.on('terminal_clear')
 def terminal_clear():
-    socketio.emit('terminal_output', '\033c')
+    if master_fd:
+        os.write(master_fd, b'\033c')
 
 if __name__ == '__main__':
-    threading.Thread(target=read_pty, daemon=True).start()
+    # Start the PTY reader thread
+    threading.Thread(target=read_and_forward_pty_output, daemon=True).start()
+    # Start the Flask-SocketIO server
     socketio.run(app, host='0.0.0.0', port=8080, allow_unsafe_werkzeug=True)
