@@ -21,12 +21,11 @@ SESSIONS_LOCK = threading.Lock()
 
 
 def _detect_shell_path() -> list:
-    # Prefer explicit SHELL if valid
     sh = os.environ.get('SHELL')
     if sh and os.path.exists(sh):
         return [sh, sh]
-    # Common Termux locations and Android
     candidates = [
+        '/data/data/com.termux/files/usr/bin/zsh',
         '/data/data/com.termux/files/usr/bin/bash',
         '/data/data/com.termux/files/usr/bin/sh',
         '/system/bin/sh',
@@ -36,7 +35,6 @@ def _detect_shell_path() -> list:
     for c in candidates:
         if os.path.exists(c):
             return [c, c]
-    # Fallback to PATH lookup
     return ['sh', 'sh']
 
 

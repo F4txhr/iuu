@@ -110,16 +110,34 @@ const httpTerm = {
     try{
       if(this.pollTimer){ clearTimeout(this.pollTimer); this.pollTimer=null; }
       const r = await fetch(`/api/term/new?cid=${encodeURIComponent(this.cid)}`, { method:'POST' });
-      const j = await r.json(); this.tid = j.tid; this.poll(); toast('HTTP terminal ready');
+      const j = await r.json(); this.tid = j.tid;
+      // Mount a terminal immediately for input
+      if(!activeTid || !terminals['http']){
+        const { t, fitAddon, searchAddon } = createXterm();
+        terminals['http'] = { term:t, fitAddon, searchAddon };
+        activeTid = 'http';
+        renderTabs();
+        mountTerminal('http');
+        t.onData(d=>httpTerm.send(d));
+        setTimeout(()=>{ try{ fitAddon && fitAddon.fit(); }catch{} }, 0);
+      }
+      this.poll();
+      toast('HTTP terminal ready');
+      // Nudge shell to print prompt and sync to current cwd
+      this.send('\n');
+      if(cwd){ try{ sendToTerminal(`cd "${cwd.replace(/\"/g,'\\\"')}" && ls\n`); }catch{} }
     }catch(e){ console.error('HTTP term new err', e); toast('Gagal membuat terminal HTTP'); }
   },
   send: async function(data){ if(!this.tid) return; try{ await fetch(`/api/term/input?cid=${encodeURIComponent(this.cid)}`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ tid:this.tid, data }) }); }catch(e){ console.error('HTTP term send err', e); } },
   clear: async function(){ if(!this.tid) return; try{ await fetch(`/api/term/clear?cid=${encodeURIComponent(this.cid)}`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ tid:this.tid }) }); }catch(e){} },
   close: async function(){ if(!this.tid) return; try{ await fetch(`/api/term/close?cid=${encodeURIComponent(this.cid)}`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ tid:this.tid }) }); }catch(e){} },
-  poll: async function(){ const currentTid=this.tid; if(!currentTid) return; try{ const r = await fetch(`/api/term/poll?cid=${encodeURIComponent(this.cid)}&tid=${encodeURIComponent(currentTid)}`); const j = await r.json(); const data = j.data||''; if(this.tid!==currentTid) return; if(data){ if(!activeTid){ const { t, fitAddon, searchAddon } = createXterm(); const tid='http'; terminals[tid]={ term:t, fitAddon, searchAddon }; activeTid=tid; renderTabs(); mountTerminal(tid); t.onData(d=>httpTerm.send(d)); } const ent = terminals[activeTid]; ent && ent.term.write(data); } }catch(e){ /* ignore */ } this.pollTimer = setTimeout(()=>this.poll(), 250); }
+  poll: async function(){ const currentTid=this.tid; if(!currentTid) return; try{ const r = await fetch(`/api/term/poll?cid=${encodeURIComponent(this.cid)}&tid=${encodeURIComponent(currentTid)}`); const j = await r.json(); const data = j.data||''; if(this.tid!==currentTid) return; if(data){ const ent = terminals[activeTid]; ent && ent.term.write(data); } }catch(e){ /* ignore */ } this.pollTimer = setTimeout(()=>this.poll(), 250); }
 };
 
 if (httpTerm.enabled) { httpTerm.start(); }
+
+// Click to focus terminal
+termContainer && termContainer.addEventListener('click', ()=>{ if(activeTid && terminals[activeTid]){ terminals[activeTid].term.focus(); } });
 
 // Shortcuts
 document.addEventListener('keydown', e=>{
