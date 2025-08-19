@@ -68,9 +68,9 @@ def t_new():
             cwd=home
         )
         os.close(slave_fd)
-        SESSIONS[tid] = { 'pid': p.pid, 'fd': master_fd, 'buf': [], 'lock': threading.Lock() }
+        SESSIONS[tid] = { 'pid': p.pid, 'fd': master_fd, 'buf': [], 'lock': threading.Lock(), 'home': home }
         threading.Thread(target=reader_loop, args=(tid,), daemon=True).start()
-        return jsonify({ 'tid': tid })
+        return jsonify({ 'tid': tid, 'home': home })
     except Exception as e:
         return jsonify({ 'error': f'{type(e).__name__}: {e}' }), 500
 
@@ -127,6 +127,32 @@ def t_close():
         except Exception:
             pass
     return jsonify({ 'ok': True })
+
+
+@app.route('/api/list')
+def list_dir():
+    path = request.args.get('path')
+    # Default to session's home if tid provided
+    tid = request.args.get('tid')
+    home = None
+    if not path and tid and tid in SESSIONS:
+        home = SESSIONS[tid].get('home')
+        path = home
+    if not path:
+        path = os.path.expanduser('~')
+    try:
+        items = []
+        with os.scandir(path) as it:
+            for entry in it:
+                try:
+                    is_dir = entry.is_dir(follow_symlinks=False)
+                    items.append({ 'name': entry.name, 'is_dir': is_dir })
+                except Exception:
+                    continue
+        items.sort(key=lambda x: (not x['is_dir'], x['name'].lower()))
+        return jsonify({ 'cwd': os.path.abspath(path), 'items': items })
+    except Exception as e:
+        return jsonify({ 'error': str(e) }), 400
 
 
 if __name__ == '__main__':
