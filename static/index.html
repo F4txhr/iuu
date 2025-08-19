@@ -13,7 +13,7 @@
   #termWrap { position:relative; flex:1; display:flex; gap:4px; padding:4px; }
   .termPane { flex:1; position:relative; border:1px solid #333; border-radius:6px; overflow:hidden; }
   .termPane .term { position:absolute; left:0; top:0; right:0; bottom:0; padding:6px; }
-  #bottombar { position:fixed; left:0; right:0; bottom:24px; height:56px; background:#1c1f26; border-top:1px solid #333; display:flex; align-items:center; gap:8px; padding:8px; z-index:15; }
+  #bottombar { position:fixed; left:0; right:0; bottom:24px; height:56px; background:#1c1f26; border-top:1px solid #333; display:flex; align-items:center; gap:8px; padding:8px; z-index:15; flex-wrap:wrap; }
   #bottombar button { background:#2a2f3a; color:#fff; border:none; padding:6px 10px; border-radius:6px; cursor:pointer; }
   #statusbar { position:fixed; left:0; right:0; bottom:0; height:24px; background:#0d1014; border-top:1px solid #333; display:flex; align-items:center; gap:12px; padding:0 8px; font-size:12px; color:#9aa; z-index:16; }
   #path { display:flex; align-items:center; gap:8px; padding:8px; border-bottom:1px solid #333; color:#9cf; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
@@ -23,12 +23,6 @@
   #list li.sel { background:#1f2630; }
   #list li .dir { color:#7ad; }
   #list li .file { color:#eee; }
-  #dpad { position:fixed; right:12px; bottom:88px; width:140px; height:140px; z-index:20; }
-  #dpad .btn { position:absolute; width:44px; height:44px; background:#2a2f3a; color:#fff; border:none; border-radius:8px; cursor:pointer; font-size:18px; }
-  #dp-up { left:48px; top:0; }
-  #dp-left { left:0; top:48px; }
-  #dp-right { left:96px; top:48px; }
-  #dp-down { left:48px; top:96px; }
 </style>
 <div id="layout">
   <div id="sidebar">
@@ -44,6 +38,7 @@
   </div>
 </div>
 <div id="bottombar">
+  <button id="btn-explorer">Explorer: On</button>
   <button id="act-home">~</button>
   <button id="act-up">..</button>
   <button id="act-lsa">ls -la</button>
@@ -56,15 +51,14 @@
   <button id="btn-log">Log: Off</button>
   <button id="btn-editor">Editor: Off</button>
   <button id="btn-save" style="display:none">Save</button>
-  <button id="clear" style="margin-left:auto">Clear</button>
+  <span style="flex:1"></span>
+  <button id="ar-up">↑</button>
+  <button id="ar-left">←</button>
+  <button id="ar-right">→</button>
+  <button id="ar-down">↓</button>
+  <button id="clear">Clear</button>
 </div>
 <div id="statusbar"><span id="st-user">user@host</span><span id="st-shell">sh</span><span id="st-time">00:00:00</span><span id="st-spin" style="display:none">⏳</span><span id="st-file" style="margin-left:auto; color:#9cf;"></span></div>
-<div id="dpad">
-  <button class="btn" id="dp-up">↑</button>
-  <button class="btn" id="dp-left">←</button>
-  <button class="btn" id="dp-right">→</button>
-  <button class="btn" id="dp-down">↓</button>
-</div>
 <script src="./static/xterm.min.js"></script>
 <script src="./static/xterm-addon-fit.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.51.0/min/vs/loader.min.js"></script>
@@ -79,9 +73,9 @@
   const t1 = mkTerm(document.getElementById('term1'));
   const t2 = mkTerm(document.getElementById('term2'));
 
-  let tid1=null, tid2=null, cwd=null, items=[], sel=0, focusTarget='explorer', scrollLock=false, homePath=null, split=false, logMode=false, logPath='';
+  let tid1=null, tid2=null, cwd=null, items=[], sel=0, focusTarget='explorer', scrollLock=false, homePath=null, split=false, logMode=false, explorerVisible=true;
 
-  function setFocus(target){ focusTarget = target; if(target==='explorer'){ document.getElementById('list').focus(); } }
+  function setFocus(target){ focusTarget = target; if(target==='explorer' && explorerVisible){ document.getElementById('list').focus(); } }
   function spin(on){ document.getElementById('st-spin').style.display = on?'inline':'none'; }
 
   async function newTerm(which){ spin(true); const r=await fetch('/api/term/new',{method:'POST'}); const j=await r.json(); if(!j.tid){ t1.t.writeln(`\r\n[ERR] ${j.error||'failed start'}`); spin(false); return; } if(which===2){ tid2=j.tid; } else { tid1=j.tid; cwd=j.home; homePath=j.home; } spin(false); }
@@ -104,19 +98,20 @@
 
   // Sidebar keyboard navigation
   const listEl = document.getElementById('list');
-  listEl.addEventListener('keydown', (e)=>{ if(e.key==='ArrowDown'){ sel=Math.min(sel+1, items.length-1); renderList(); e.preventDefault(); } else if(e.key==='ArrowUp'){ sel=Math.max(sel-1, 0); renderList(); e.preventDefault(); } else if(e.key==='Enter'){ openItem(); e.preventDefault(); } else if(e.key==='Backspace'){ goUp(); e.preventDefault(); } else if(e.key==='e'){ /* quick editor */ const it=items[sel]; if(it && !it.is_dir){ openInEditor(cwd.replace(/\/+$/,'')+'/'+it.name); } } });
+  listEl.addEventListener('keydown', (e)=>{ if(e.key==='ArrowDown'){ sel=Math.min(sel+1, items.length-1); renderList(); e.preventDefault(); } else if(e.key==='ArrowUp'){ sel=Math.max(sel-1, 0); renderList(); e.preventDefault(); } else if(e.key==='Enter'){ openItem(); e.preventDefault(); } else if(e.key==='Backspace'){ goUp(); e.preventDefault(); } else if(e.key==='e'){ const it=items[sel]; if(it && !it.is_dir){ openInEditor(cwd.replace(/\/+$/,'')+'/'+it.name); } } });
   listEl.addEventListener('click', ()=>setFocus('explorer'));
   document.getElementById('term1').addEventListener('click', ()=>{ focusTarget='terminal1'; t1.t.focus(); });
   document.getElementById('term2').addEventListener('click', ()=>{ focusTarget='terminal2'; t2.t.focus(); });
 
-  // D-pad buttons
-  function dpsend(code){ if(focusTarget==='terminal2'){ send(2, code); } else if(focusTarget==='terminal1'){ send(1, code); } else { if(code==='\x1b[A'){ sel=Math.max(sel-1, 0); renderList(); } else if(code==='\x1b[B'){ sel=Math.min(sel+1, items.length-1); renderList(); } else if(code==='\x1b[D'){ goUp(); } else if(code==='\x1b[C'){ openItem(); } } }
-  document.getElementById('dp-up').onclick = ()=> dpsend("\x1b[A");
-  document.getElementById('dp-down').onclick = ()=> dpsend("\x1b[B");
-  document.getElementById('dp-left').onclick = ()=> dpsend("\x1b[D");
-  document.getElementById('dp-right').onclick = ()=> dpsend("\x1b[C");
+  // Bottom bar arrows
+  function arrowAction(code){ if(focusTarget==='terminal2'){ send(2, code); } else if(focusTarget==='terminal1' || !explorerVisible){ send(1, code); } else { if(code==='\x1b[A'){ sel=Math.max(sel-1, 0); renderList(); } else if(code==='\x1b[B'){ sel=Math.min(sel+1, items.length-1); renderList(); } else if(code==='\x1b[D'){ goUp(); } else if(code==='\x1b[C'){ openItem(); } } }
+  document.getElementById('ar-up').onclick = ()=> arrowAction("\x1b[A");
+  document.getElementById('ar-down').onclick = ()=> arrowAction("\x1b[B");
+  document.getElementById('ar-left').onclick = ()=> arrowAction("\x1b[D");
+  document.getElementById('ar-right').onclick = ()=> arrowAction("\x1b[C");
 
   // Bottom bar actions
+  document.getElementById('btn-explorer').onclick = ()=>{ explorerVisible=!explorerVisible; document.getElementById('btn-explorer').textContent='Explorer: '+(explorerVisible?'On':'Off'); document.getElementById('sidebar').style.display = explorerVisible?'block':'none'; setTimeout(()=>{ try{ t1.fit && t1.fit.fit(); t2.fit && t2.fit.fit(); }catch{} }, 50); };
   document.getElementById('act-home').onclick = ()=>{ send(1, `cd ~\n`); send(1, 'ls\n'); if(homePath) loadList(homePath); };
   document.getElementById('act-up').onclick = ()=> goUp();
   document.getElementById('act-lsa').onclick = ()=> send(1, 'ls -la\n');
