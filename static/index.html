@@ -11,16 +11,23 @@
   #top { position:absolute; top:8px; right:8px; z-index:10; }
   #top button { background:#2a2f3a; color:#fff; border:none; padding:6px 10px; border-radius:4px; cursor:pointer; }
   #term { position:absolute; left:0; top:0; right:0; bottom:0; padding:8px; }
-  #path { padding:8px; border-bottom:1px solid #333; color:#9cf; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-  #list { list-style:none; margin:0; padding:0; }
+  #path { display:flex; align-items:center; gap:8px; padding:8px; border-bottom:1px solid #333; color:#9cf; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  #path .back { background:#2a2f3a; color:#fff; border:none; padding:2px 8px; border-radius:4px; cursor:pointer; }
+  #list { list-style:none; margin:0; padding:0; outline:none; }
   #list li { padding:6px 10px; cursor:pointer; }
   #list li.sel { background:#1f2630; }
   #list li .dir { color:#7ad; }
   #list li .file { color:#eee; }
+  #dpad { position:fixed; right:12px; bottom:12px; width:140px; height:140px; }
+  #dpad .btn { position:absolute; width:44px; height:44px; background:#2a2f3a; color:#fff; border:none; border-radius:8px; cursor:pointer; font-size:18px; }
+  #dp-up { left:48px; top:0; }
+  #dp-left { left:0; top:48px; }
+  #dp-right { left:96px; top:48px; }
+  #dp-down { left:48px; top:96px; }
 </style>
 <div id="layout">
   <div id="sidebar">
-    <div id="path"></div>
+    <div id="path"><button class="back" id="btn-up">⬅</button><span id="path-text"></span></div>
     <ul id="list" tabindex="0"></ul>
   </div>
   <div id="main">
@@ -28,42 +35,61 @@
     <div id="term"></div>
   </div>
 </div>
+<div id="dpad">
+  <button class="btn" id="dp-up">↑</button>
+  <button class="btn" id="dp-left">←</button>
+  <button class="btn" id="dp-right">→</button>
+  <button class="btn" id="dp-down">↓</button>
+</div>
 <script src="./static/xterm.min.js"></script>
 <script>
 (async function(){
   const term = new Terminal({ fontFamily: 'Fira Code, ui-monospace, monospace', fontSize: 14, theme: { background: '#111111' }, cursorBlink: true, scrollback: 5000 });
-  term.open(document.getElementById('term'));
+  const termEl = document.getElementById('term');
+  term.open(termEl);
   window.addEventListener('resize', ()=>{ try{ term.scrollToBottom(); }catch{} });
 
-  let tid=null, cwd=null, items=[], sel=0;
+  let tid=null, cwd=null, items=[], sel=0, focusTarget='explorer';
+
+  function setFocus(target){ focusTarget = target; if(target==='explorer'){ document.getElementById('list').focus(); } }
 
   async function newTerm(){
     const r = await fetch('/api/term/new', {method:'POST'});
     const j = await r.json();
     if(!j.tid){ term.writeln(`\r\n[ERR] ${j.error||'failed start'}`); return; }
     tid=j.tid; cwd=j.home; term.writeln(`[OK] terminal ready (tid=${tid})`);
-    poll(); loadList(cwd);
+    poll(); loadList(cwd); setFocus('explorer');
   }
 
-  async function poll(){
-    if(!tid) return; try{ const r=await fetch('/api/term/poll?tid='+encodeURIComponent(tid)); const j=await r.json(); if(j.data){ term.write(j.data); } }catch{} setTimeout(poll,80);
-  }
-
+  async function poll(){ if(!tid) return; try{ const r=await fetch('/api/term/poll?tid='+encodeURIComponent(tid)); const j=await r.json(); if(j.data){ term.write(j.data); } }catch{} setTimeout(poll,80); }
   async function send(data){ if(!tid) return; try{ await fetch('/api/term/input',{ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ tid, data }) }); }catch(e){ term.writeln(`\r\n[ERR] send failed`); } }
 
-  async function loadList(path){ try{ const r=await fetch('/api/list?path='+encodeURIComponent(path)+'&tid='+encodeURIComponent(tid)); const j=await r.json(); if(j.error){ return; } cwd=j.cwd; document.getElementById('path').textContent=cwd; items=j.items||[]; sel=0; renderList(); }catch{} }
+  async function loadList(path){ try{ const r=await fetch('/api/list?path='+encodeURIComponent(path)+'&tid='+encodeURIComponent(tid)); const j=await r.json(); if(j.error){ return; } cwd=j.cwd; document.getElementById('path-text').textContent=cwd; items=j.items||[]; sel=Math.min(sel, Math.max(0, items.length-1)); renderList(); }catch{} }
 
-  function renderList(){ const ul=document.getElementById('list'); ul.innerHTML=''; items.forEach((it,i)=>{ const li=document.createElement('li'); li.className = (i===sel?'sel':''); const span=document.createElement('span'); span.className = it.is_dir?'dir':'file'; span.textContent = (it.is_dir?'📁 ':'📄 ')+it.name; li.appendChild(span); li.onclick=()=>{ sel=i; openItem(); }; ul.appendChild(li); }); }
+  function renderList(){ const ul=document.getElementById('list'); ul.innerHTML=''; items.forEach((it,i)=>{ const li=document.createElement('li'); li.className = (i===sel?'sel':''); const span=document.createElement('span'); span.className = it.is_dir?'dir':'file'; span.textContent = (it.is_dir?'📁 ':'📄 ')+it.name; li.appendChild(span); li.onclick=()=>{ sel=i; openItem(); setFocus('explorer'); }; ul.appendChild(li); }); }
 
   async function openItem(){ const it=items[sel]; if(!it) return; const path=cwd.replace(/\/+$/,'')+'/'+it.name; if(it.is_dir){ await send(`cd "${path.replace(/\"/g,'\\\"')}"\n`); await send(`ls\n`); loadList(path); } else { await send(`xdg-open "${path.replace(/\"/g,'\\\"')}"\n`); } }
 
-  document.getElementById('list').addEventListener('keydown', (e)=>{ if(e.key==='ArrowDown'){ sel=Math.min(sel+1, items.length-1); renderList(); e.preventDefault(); } else if(e.key==='ArrowUp'){ sel=Math.max(sel-1, 0); renderList(); e.preventDefault(); } else if(e.key==='Enter'){ openItem(); e.preventDefault(); } else if(e.key==='Backspace'){ // go up
-      const up=cwd.replace(/\/+$/,'').replace(/\/[^\/]+$/,'')||'/'; send(`cd "${up.replace(/\"/g,'\\\"')}"\n`); send('ls\n'); loadList(up); e.preventDefault(); }
-  });
+  function goUp(){ const up=cwd.replace(/\/+$/,'').replace(/\/[^\/]+$/,'')||'/'; send(`cd "${up.replace(/\"/g,'\\\"')}"\n`); send('ls\n'); loadList(up); }
 
-  term.onData(d => send(d));
+  // Sidebar keyboard navigation
+  const listEl = document.getElementById('list');
+  listEl.addEventListener('keydown', (e)=>{ if(e.key==='ArrowDown'){ sel=Math.min(sel+1, items.length-1); renderList(); e.preventDefault(); } else if(e.key==='ArrowUp'){ sel=Math.max(sel-1, 0); renderList(); e.preventDefault(); } else if(e.key==='Enter'){ openItem(); e.preventDefault(); } else if(e.key==='Backspace'){ goUp(); e.preventDefault(); } });
+  listEl.addEventListener('click', ()=>setFocus('explorer'));
+  termEl.addEventListener('click', ()=>{ focusTarget='terminal'; term.focus(); });
+
+  // D-pad buttons
+  document.getElementById('dp-up').onclick = ()=>{ if(focusTarget==='explorer'){ sel=Math.max(sel-1, 0); renderList(); } else { send("\x1b[A"); } };
+  document.getElementById('dp-down').onclick = ()=>{ if(focusTarget==='explorer'){ sel=Math.min(sel+1, items.length-1); renderList(); } else { send("\x1b[B"); } };
+  document.getElementById('dp-left').onclick = ()=>{ if(focusTarget==='explorer'){ goUp(); } else { send("\x1b[D"); } };
+  document.getElementById('dp-right').onclick = ()=>{ if(focusTarget==='explorer'){ openItem(); } else { send("\x1b[C"); } };
+
+  // Back button in header
+  document.getElementById('btn-up').onclick = ()=>{ goUp(); setFocus('explorer'); };
+
+  term.onData(d => { focusTarget='terminal'; send(d); });
   document.getElementById('clear').onclick = ()=>{ if(tid) fetch('/api/term/clear',{method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({tid})}); };
 
-  await newTerm(); document.getElementById('list').focus();
+  await newTerm();
 })();
 </script>
