@@ -1,14 +1,16 @@
 <!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Minimal Terminal (xterm)</title>
+<title>Terminal + Editor</title>
 <link rel="stylesheet" href="./static/xterm.css">
 <style>
   html, body { height:100%; margin:0; background:#111; color:#eee; font-family:ui-monospace, monospace; }
   #layout { display:flex; height:100vh; }
   #sidebar { width: 260px; border-right:1px solid #333; overflow:auto; background:#0f0f0f; }
-  #main { position:relative; flex:1; }
-  #termWrap { position:absolute; left:0; top:0; right:0; bottom:84px; display:flex; gap:4px; padding:4px; }
+  #main { position:relative; flex:1; display:flex; flex-direction:column; }
+  #editorWrap { display:none; position:relative; height:50%; border-bottom:1px solid #333; }
+  #editor { position:absolute; left:0; top:0; right:0; bottom:0; }
+  #termWrap { position:relative; flex:1; display:flex; gap:4px; padding:4px; }
   .termPane { flex:1; position:relative; border:1px solid #333; border-radius:6px; overflow:hidden; }
   .termPane .term { position:absolute; left:0; top:0; right:0; bottom:0; padding:6px; }
   #bottombar { position:fixed; left:0; right:0; bottom:24px; height:56px; background:#1c1f26; border-top:1px solid #333; display:flex; align-items:center; gap:8px; padding:8px; z-index:15; }
@@ -34,6 +36,7 @@
     <ul id="list" tabindex="0"></ul>
   </div>
   <div id="main">
+    <div id="editorWrap"><div id="editor"></div></div>
     <div id="termWrap">
       <div class="termPane"><div id="term1" class="term"></div></div>
       <div class="termPane" id="pane2" style="display:none"><div id="term2" class="term"></div></div>
@@ -51,9 +54,11 @@
   <button id="btn-scroll">ScrollLock: Off</button>
   <button id="btn-split">Split: Off</button>
   <button id="btn-log">Log: Off</button>
+  <button id="btn-editor">Editor: Off</button>
+  <button id="btn-save" style="display:none">Save</button>
   <button id="clear" style="margin-left:auto">Clear</button>
 </div>
-<div id="statusbar"><span id="st-user">user@host</span><span id="st-shell">sh</span><span id="st-time">00:00:00</span><span id="st-spin" style="display:none">⏳</span></div>
+<div id="statusbar"><span id="st-user">user@host</span><span id="st-shell">sh</span><span id="st-time">00:00:00</span><span id="st-spin" style="display:none">⏳</span><span id="st-file" style="margin-left:auto; color:#9cf;"></span></div>
 <div id="dpad">
   <button class="btn" id="dp-up">↑</button>
   <button class="btn" id="dp-left">←</button>
@@ -62,6 +67,7 @@
 </div>
 <script src="./static/xterm.min.js"></script>
 <script src="./static/xterm-addon-fit.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.51.0/min/vs/loader.min.js"></script>
 <script>
 (async function(){
   // Status info
@@ -80,13 +86,8 @@
 
   async function newTerm(which){ spin(true); const r=await fetch('/api/term/new',{method:'POST'}); const j=await r.json(); if(!j.tid){ t1.t.writeln(`\r\n[ERR] ${j.error||'failed start'}`); spin(false); return; } if(which===2){ tid2=j.tid; } else { tid1=j.tid; cwd=j.home; homePath=j.home; } spin(false); }
 
-  async function attachOrNew(){ // auto-attach tid1
-    const saved = localStorage.getItem('tid1');
-    if(saved){ tid1=saved; // try poll once
-      const test=await fetch('/api/term/poll?tid='+encodeURIComponent(tid1)); if(test.status!==200){ tid1=null; }
-    }
-    if(!tid1) await newTerm(1);
-    localStorage.setItem('tid1', tid1);
+  async function attachOrNew(){ const saved = localStorage.getItem('tid1'); if(saved){ tid1=saved; const test=await fetch('/api/term/poll?tid='+encodeURIComponent(tid1)); if(test.status!==200){ tid1=null; localStorage.removeItem('tid1'); } }
+    if(!tid1) await newTerm(1); localStorage.setItem('tid1', tid1);
   }
 
   async function poll(which){ const tid=(which===2?tid2:tid1); const tx=(which===2?t2:t1); if(!tid) return; try{ const r=await fetch('/api/term/poll?tid='+encodeURIComponent(tid)); const j=await r.json(); if(j.data){ tx.t.write(j.data); if(!scrollLock){ tx.t.scrollToBottom(); } } }catch{} setTimeout(()=>poll(which),80); }
@@ -95,7 +96,7 @@
 
   async function loadList(path){ try{ const r=await fetch('/api/list?path='+encodeURIComponent(path)+'&tid='+encodeURIComponent(tid1)); const j=await r.json(); if(j.error){ return; } cwd=j.cwd; document.getElementById('path-text').textContent=cwd; items=j.items||[]; sel=0; renderList(); }catch{} }
 
-  function renderList(){ const ul=document.getElementById('list'); ul.innerHTML=''; items.forEach((it,i)=>{ const li=document.createElement('li'); li.className = (i===sel?'sel':''); const span=document.createElement('span'); span.className = it.is_dir?'dir':'file'; span.textContent = (it.is_dir?'📁 ':'📄 ')+it.name; li.appendChild(span); li.onclick=()=>{ sel=i; openItem(); setFocus('explorer'); }; ul.appendChild(li); }); }
+  function renderList(){ const ul=document.getElementById('list'); ul.innerHTML=''; items.forEach((it,i)=>{ const li=document.createElement('li'); li.className = (i===sel?'sel':''); const span=document.createElement('span'); span.className = it.is_dir?'dir':'file'; span.textContent = (it.is_dir?'📁 ':'📄 ')+it.name; li.appendChild(span); li.onclick=()=>{ sel=i; openItem(); setFocus('explorer'); }; li.ondblclick=()=>{ if(!it.is_dir){ openInEditor(cwd.replace(/\/+$/,'')+'/'+it.name); } }; ul.appendChild(li); }); }
 
   async function openItem(){ const it=items[sel]; if(!it) return; const path=cwd.replace(/\/+$/,'')+'/'+it.name; if(it.is_dir){ await send(1, `cd "${path.replace(/\"/g,'\\\"')}"\n`); await send(1, `ls\n`); loadList(path); } else { await send(1, `xdg-open "${path.replace(/\"/g,'\\\"')}"\n`); } }
 
@@ -103,13 +104,13 @@
 
   // Sidebar keyboard navigation
   const listEl = document.getElementById('list');
-  listEl.addEventListener('keydown', (e)=>{ if(e.key==='ArrowDown'){ sel=Math.min(sel+1, items.length-1); renderList(); e.preventDefault(); } else if(e.key==='ArrowUp'){ sel=Math.max(sel-1, 0); renderList(); e.preventDefault(); } else if(e.key==='Enter'){ openItem(); e.preventDefault(); } else if(e.key==='Backspace'){ goUp(); e.preventDefault(); } });
+  listEl.addEventListener('keydown', (e)=>{ if(e.key==='ArrowDown'){ sel=Math.min(sel+1, items.length-1); renderList(); e.preventDefault(); } else if(e.key==='ArrowUp'){ sel=Math.max(sel-1, 0); renderList(); e.preventDefault(); } else if(e.key==='Enter'){ openItem(); e.preventDefault(); } else if(e.key==='Backspace'){ goUp(); e.preventDefault(); } else if(e.key==='e'){ /* quick editor */ const it=items[sel]; if(it && !it.is_dir){ openInEditor(cwd.replace(/\/+$/,'')+'/'+it.name); } } });
   listEl.addEventListener('click', ()=>setFocus('explorer'));
   document.getElementById('term1').addEventListener('click', ()=>{ focusTarget='terminal1'; t1.t.focus(); });
   document.getElementById('term2').addEventListener('click', ()=>{ focusTarget='terminal2'; t2.t.focus(); });
 
   // D-pad buttons
-  function dpsend(code){ if(focusTarget==='terminal2'){ send(2, code); } else if(focusTarget==='terminal1'){ send(1, code); } else { /* explorer */ if(code==='\x1b[A'){ sel=Math.max(sel-1, 0); renderList(); } else if(code==='\x1b[B'){ sel=Math.min(sel+1, items.length-1); renderList(); } else if(code==='\x1b[D'){ goUp(); } else if(code==='\x1b[C'){ openItem(); } } }
+  function dpsend(code){ if(focusTarget==='terminal2'){ send(2, code); } else if(focusTarget==='terminal1'){ send(1, code); } else { if(code==='\x1b[A'){ sel=Math.max(sel-1, 0); renderList(); } else if(code==='\x1b[B'){ sel=Math.min(sel+1, items.length-1); renderList(); } else if(code==='\x1b[D'){ goUp(); } else if(code==='\x1b[C'){ openItem(); } } }
   document.getElementById('dp-up').onclick = ()=> dpsend("\x1b[A");
   document.getElementById('dp-down').onclick = ()=> dpsend("\x1b[B");
   document.getElementById('dp-left').onclick = ()=> dpsend("\x1b[D");
@@ -124,12 +125,20 @@
   document.getElementById('btn-copy').onclick = ()=>{ try{ const sel=window.getSelection().toString(); if(sel){ navigator.clipboard.writeText(sel); } }catch{} };
   document.getElementById('btn-reset').onclick = async ()=>{ if(tid1){ await fetch('/api/term/close',{method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({tid:tid1})}); tid1=null; localStorage.removeItem('tid1'); } t1.t.write('\r\n[reset]\r\n'); await attachOrNew(); poll(1); loadList(homePath||cwd); };
   document.getElementById('btn-scroll').onclick = ()=>{ scrollLock=!scrollLock; document.getElementById('btn-scroll').textContent = 'ScrollLock: ' + (scrollLock?'On':'Off'); };
-  document.getElementById('clear').onclick = ()=>{ if(focusTarget==='terminal2' && tid2) fetch('/api/term/clear',{method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({tid:tid2})}); else if(tid1) fetch('/api/term/clear',{method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({tid:tid1})}); };
   document.getElementById('btn-up').onclick = ()=>{ goUp(); setFocus('explorer'); };
+  document.getElementById('clear').onclick = ()=>{ if(focusTarget==='terminal2' && tid2) fetch('/api/term/clear',{method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({tid:tid2})}); else if(tid1) fetch('/api/term/clear',{method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({tid:tid1})}); };
 
   // Split & Log mode
   document.getElementById('btn-split').onclick = async ()=>{ const pane2=document.getElementById('pane2'); split=!split; document.getElementById('btn-split').textContent='Split: '+(split?'On':'Off'); if(split){ pane2.style.display='block'; if(!tid2){ await newTerm(2); poll(2); } } else { pane2.style.display='none'; } };
   document.getElementById('btn-log').onclick = async ()=>{ logMode=!logMode; document.getElementById('btn-log').textContent='Log: '+(logMode?'On':'Off'); if(logMode){ const p=prompt('Path file utk tail -f:'); if(!p){ logMode=false; document.getElementById('btn-log').textContent='Log: Off'; return; } if(!tid2){ await newTerm(2); poll(2); split=true; document.getElementById('pane2').style.display='block'; document.getElementById('btn-split').textContent='Split: On'; } t2.t.clear(); await send(2, `tail -f "${p.replace(/\"/g,'\\\"')}"\n`); } else { if(tid2){ await send(2, '\x03'); } } };
+
+  // Editor (Monaco)
+  let editor=null, monacoLoaded=false, currentFile=null;
+  function showEditor(on){ document.getElementById('editorWrap').style.display = on?'block':'none'; document.getElementById('btn-editor').textContent = 'Editor: ' + (on?'On':'Off'); document.getElementById('btn-save').style.display = on?'inline-block':'none'; }
+  function ensureMonaco(cb){ if(monacoLoaded){ cb(); return; } require.config({ paths: { 'vs': 'https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.51.0/min/vs' } }); require(['vs/editor/editor.main'], ()=>{ monacoLoaded=true; cb(); }); }
+  async function openInEditor(path){ try{ const r=await fetch('/api/read-file?path='+encodeURIComponent(path)); const j=await r.json(); if(!j.ok){ alert(j.error||'Gagal baca file'); return; } ensureMonaco(()=>{ showEditor(true); currentFile=path; document.getElementById('st-file').textContent=path; if(!editor){ editor = monaco.editor.create(document.getElementById('editor'), { value:j.data||'', language:'plaintext', theme:'vs-dark', automaticLayout:true, fontSize:14 }); } else { editor.setValue(j.data||''); } }); }catch(e){ alert('Gagal membuka: '+e); } }
+  document.getElementById('btn-editor').onclick = ()=>{ const on = document.getElementById('editorWrap').style.display!=='block'; showEditor(on); };
+  document.getElementById('btn-save').onclick = async ()=>{ if(!currentFile||!editor) return; const data=editor.getValue(); const r=await fetch('/api/save-file',{ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ path:currentFile, data }) }); const j=await r.json(); if(!j.ok){ alert(j.error||'Gagal simpan'); } };
 
   // Term input
   t1.t.onData(d => { focusTarget='terminal1'; send(1,d); });

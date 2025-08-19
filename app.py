@@ -166,6 +166,40 @@ def info():
     return jsonify({ 'user': user, 'host': host, 'shell': os.path.basename(shell_path) })
 
 
+@app.route('/api/read-file')
+def read_file():
+    path = request.args.get('path')
+    if not path:
+        return jsonify({'error':'missing path'}), 400
+    try:
+        with open(path, 'rb') as f:
+            data = f.read(2*1024*1024)
+        try:
+            text = data.decode('utf-8')
+        except Exception:
+            text = data.decode('utf-8', errors='ignore')
+        return jsonify({'ok':True, 'data':text})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 400
+
+
+@app.route('/api/save-file', methods=['POST'])
+def save_file():
+    data = request.json or {}
+    path = data.get('path')
+    content = data.get('data','')
+    if not path:
+        return jsonify({'error':'missing path'}), 400
+    try:
+        parent = os.path.dirname(path) or '.'
+        os.makedirs(parent, exist_ok=True)
+        with open(path, 'w', encoding='utf-8', errors='ignore') as f:
+            f.write(content)
+        return jsonify({'ok':True})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 400
+
+
 if __name__ == '__main__':
     os.makedirs('static', exist_ok=True)
     app.run(host='0.0.0.0', port=8080)
