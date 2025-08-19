@@ -1,63 +1,62 @@
 <!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Minimal Terminal</title>
+<title>Minimal Terminal (xterm)</title>
+<link rel="stylesheet" href="./static/xterm.css">
 <style>
-  body { background:#111; color:#eee; font-family:ui-monospace, monospace; margin:0; }
-  #wrap { display:flex; flex-direction:column; height:100vh; }
-  #out { flex:1; padding:10px; white-space:pre-wrap; overflow:auto; background:#000; }
-  #bar { display:flex; gap:6px; padding:8px; background:#222; border-top:1px solid #333; }
-  #in { flex:1; background:#111; color:#fff; border:1px solid #333; border-radius:4px; padding:6px; }
-  button { background:#2a2f3a; color:#fff; border:none; padding:6px 10px; border-radius:4px; }
+  html, body { height:100%; margin:0; background:#111; }
+  #top { position:fixed; top:8px; right:8px; z-index:10; }
+  #top button { background:#2a2f3a; color:#fff; border:none; padding:6px 10px; border-radius:4px; cursor:pointer; }
+  #term { position:fixed; left:0; top:0; right:0; bottom:0; padding:8px; }
 </style>
-<div id="wrap">
-  <pre id="out"></pre>
-  <div id="bar">
-    <input id="in" placeholder="Type command then Enter">
-    <button id="send">Send</button>
-    <button id="clear">Clear</button>
-  </div>
+<div id="top">
+  <button id="clear">Clear</button>
 </div>
+<div id="term"></div>
+<script src="./static/xterm.min.js"></script>
 <script>
 (async function(){
-  const out = document.getElementById('out');
-  const input = document.getElementById('in');
-  const sendBtn = document.getElementById('send');
-  const clearBtn = document.getElementById('clear');
+  const term = new Terminal({
+    fontFamily: 'Fira Code, ui-monospace, monospace',
+    fontSize: 14,
+    theme: { background: '#111111' },
+    cursorBlink: true,
+    scrollback: 5000
+  });
+  term.open(document.getElementById('term'));
+  window.addEventListener('resize', ()=>{ try{ term.scrollToBottom(); }catch{} });
+
   let tid = null;
-
-  function append(txt){ out.textContent += txt; out.scrollTop = out.scrollHeight; }
-
   async function newTerm(){
     const r = await fetch('/api/term/new', {method:'POST'});
     const j = await r.json();
-    if(!j.tid){ append('\n[ERR] '+(j.error||'failed start')+'\n'); return; }
-    tid = j.tid; append('[OK] terminal ready (tid='+tid+')\n'); poll();
+    if(!j.tid){ term.writeln(`\r\n[ERR] ${j.error||'failed start'}`); return; }
+    tid = j.tid; term.writeln(`[OK] terminal ready (tid=${tid})`);
+    poll();
   }
 
   async function poll(){
     if(!tid) return;
     try{
       const r = await fetch('/api/term/poll?tid='+encodeURIComponent(tid));
-      const j = await r.json(); if(j.data){ append(j.data); }
+      const j = await r.json(); if(j.data){ term.write(j.data); }
     }catch{}
-    setTimeout(poll, 150);
+    setTimeout(poll, 80);
   }
 
-  async function send(cmd){
+  async function send(data){
     if(!tid) return;
     try{
       await fetch('/api/term/input', {
         method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({ tid, data: cmd.endsWith('\n')?cmd:(cmd+'\n') })
+        body: JSON.stringify({ tid, data })
       });
-    }catch(e){ append('\n[ERR] send failed\n'); }
+    }catch(e){ term.writeln(`\r\n[ERR] send failed`); }
   }
 
-  sendBtn.onclick = ()=>{ if(input.value) { send(input.value); input.value=''; input.focus(); } };
-  input.onkeydown = (e)=>{ if(e.key==='Enter'){ sendBtn.click(); } };
-  clearBtn.onclick = ()=>{ if(tid) fetch('/api/term/clear',{method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({tid})}); };
+  term.onData(d => send(d));
+  document.getElementById('clear').onclick = ()=>{ if(tid) fetch('/api/term/clear',{method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({tid})}); };
 
-  await newTerm(); input.focus();
+  await newTerm();
 })();
 </script>
