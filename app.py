@@ -1,218 +1,205 @@
-from flask import Flask, request, jsonify, send_from_directory, send_file
-from flask_socketio import SocketIO, emit
-import os, pty, select, threading, base64, shutil
-from datetime import datetime
+from flask import Flask, request, jsonify, send_from_directory
+import os, pty, select, threading, subprocess, signal, socket, getpass
 
 app = Flask(__name__, static_url_path='/static')
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
 
-# Start at home or custom path
-START_PATH = os.environ.get("START_PATH", os.path.expanduser("~"))
-cwd = [START_PATH]  # mutable for threading
+SESSIONS = {}
+SESS_LOCK = threading.Lock()
+
+
+def detect_shell():
+    sh = os.environ.get('SHELL')
+    if sh and os.path.exists(sh):
+        return [sh, '-i']
+    for c in [
+        '/data/data/com.termux/files/usr/bin/zsh',
+        '/data/data/com.termux/files/usr/bin/bash',
+        '/data/data/com.termux/files/usr/bin/sh',
+        '/system/bin/sh',
+        '/bin/bash',
+        '/bin/sh',
+    ]:
+        if os.path.exists(c):
+            return [c, '-i']
+    return ['sh', '-i']
+
+
+def reader_loop(tid):
+    while True:
+        term = SESSIONS.get(tid)
+        if not term:
+            break
+        try:
+            r, _, _ = select.select([term['fd']], [], [], 0.1)
+            if r:
+                out = os.read(term['fd'], 1024 * 16)
+                if out:
+                    with term['lock']:
+                        term['buf'].append(out.decode('utf-8', errors='ignore'))
+        except Exception:
+            break
+
 
 @app.route('/')
 def index():
     return send_from_directory('static', 'index.html')
 
-@app.route('/static/<path:filename>')
-def static_files(filename):
-    return send_from_directory('static', filename)
 
-def format_size(size):
-    if size < 1024:
-        return f"{size} B"
-    for unit in ['KB', 'MB', 'GB', 'TB']:
-        size /= 1024
-        if size < 1024:
-            return f"{size:.1f} {unit}"
-    return f"{size:.1f} PB"
+@app.route('/api/term/new', methods=['GET', 'POST'])
+def t_new():
+    tid = None
+    with SESS_LOCK:
+        tid = str(len(SESSIONS) + 1)
+    try:
+        master_fd, slave_fd = os.openpty()
+        env = os.environ.copy()
+        env.setdefault('TERM', 'xterm-256color')
+        home = env.get('HOME') or os.path.expanduser('~')
+        env.setdefault('HOME', home)
+        cmd = detect_shell()
+        p = subprocess.Popen(
+            cmd,
+            preexec_fn=os.setsid,
+            stdin=slave_fd,
+            stdout=slave_fd,
+            stderr=slave_fd,
+            close_fds=True,
+            env=env,
+            cwd=home
+        )
+        os.close(slave_fd)
+        SESSIONS[tid] = { 'pid': p.pid, 'fd': master_fd, 'buf': [], 'lock': threading.Lock(), 'home': home }
+        threading.Thread(target=reader_loop, args=(tid,), daemon=True).start()
+        return jsonify({ 'tid': tid, 'home': home })
+    except Exception as e:
+        return jsonify({ 'error': f'{type(e).__name__}: {e}' }), 500
 
-# API: list directory
+
+@app.route('/api/term/input', methods=['GET', 'POST'])
+def t_input():
+    data = request.json if request.is_json else None
+    tid = request.args.get('tid') or (data.get('tid') if data else None)
+    inp = request.args.get('data') or (data.get('data') if data else '')
+    term = SESSIONS.get(tid)
+    if not term:
+        return jsonify({ 'error': 'no session' }), 404
+    os.write(term['fd'], inp.encode())
+    return jsonify({ 'ok': True })
+
+
+@app.route('/api/term/poll')
+def t_poll():
+    tid = request.args.get('tid')
+    term = SESSIONS.get(tid)
+    if not term:
+        return jsonify({ 'error': 'no session' }), 404
+    out = ''
+    with term['lock']:
+        if term['buf']:
+            out = ''.join(term['buf'])
+            term['buf'].clear()
+    return jsonify({ 'data': out })
+
+
+@app.route('/api/term/clear', methods=['GET', 'POST'])
+def t_clear():
+    data = request.json if request.is_json else None
+    tid = request.args.get('tid') or (data.get('tid') if data else None)
+    term = SESSIONS.get(tid)
+    if not term:
+        return jsonify({ 'error': 'no session' }), 404
+    os.write(term['fd'], b'\033c')
+    return jsonify({ 'ok': True })
+
+
+@app.route('/api/term/close', methods=['GET', 'POST'])
+def t_close():
+    data = request.json if request.is_json else None
+    tid = request.args.get('tid') or (data.get('tid') if data else None)
+    term = SESSIONS.pop(tid, None)
+    if term:
+        try:
+            os.close(term['fd'])
+        except Exception:
+            pass
+        try:
+            os.kill(term['pid'], signal.SIGKILL)
+        except Exception:
+            pass
+    return jsonify({ 'ok': True })
+
+
 @app.route('/api/list')
 def list_dir():
-    path = request.args.get('path', cwd[0])
+    path = request.args.get('path')
+    # Default to session's home if tid provided
+    tid = request.args.get('tid')
+    home = None
+    if not path and tid and tid in SESSIONS:
+        home = SESSIONS[tid].get('home')
+        path = home
     if not path:
-        path = cwd[0] if cwd[0] else START_PATH
+        path = os.path.expanduser('~')
     try:
         items = []
-        for name in os.listdir(path):
-            full = os.path.join(path, name)
-            stat = os.stat(full)
-            is_dir = os.path.isdir(full)
-            items.append({
-                "name": name,
-                "is_dir": is_dir,
-                "is_img": not is_dir and name.lower().endswith(('.png','.jpg','.jpeg','.gif','.svg','.webp')),
-                "is_txt": not is_dir and name.lower().endswith(('.txt','.md','.py','.js','.json','.html','.css','.sh','.log','.csv')),
-                "size": format_size(stat.st_size) if not is_dir else "",
-                "modified": datetime.fromtimestamp(stat.st_mtime).strftime('%Y-%m-%d %H:%M:%S')
-            })
-        return jsonify({
-            "cwd": os.path.abspath(path),
-            "items": sorted(items, key=lambda x: (not x["is_dir"], x["name"].lower()))
-        })
+        with os.scandir(path) as it:
+            for entry in it:
+                try:
+                    is_dir = entry.is_dir(follow_symlinks=False)
+                    items.append({ 'name': entry.name, 'is_dir': is_dir })
+                except Exception:
+                    continue
+        items.sort(key=lambda x: (not x['is_dir'], x['name'].lower()))
+        return jsonify({ 'cwd': os.path.abspath(path), 'items': items })
     except Exception as e:
-        return jsonify({"error": str(e)}), 400
+        return jsonify({ 'error': str(e) }), 400
 
-# API: download
-@app.route('/api/download')
-def download_file():
+
+@app.route('/api/info')
+def info():
+    try:
+        user = os.environ.get('USER') or getpass.getuser()
+    except Exception:
+        user = 'user'
+    host = socket.gethostname() or 'localhost'
+    shell_path = (detect_shell()[0] if isinstance(detect_shell(), list) else 'sh')
+    return jsonify({ 'user': user, 'host': host, 'shell': os.path.basename(shell_path) })
+
+
+@app.route('/api/read-file')
+def read_file():
     path = request.args.get('path')
-    if not path or not os.path.isfile(path):
-        return "File not found", 404
-    return send_file(path, as_attachment=True)
-
-# API: preview file
-@app.route('/api/preview')
-def preview_file():
-    path = request.args.get('path')
-    if not path or not os.path.isfile(path):
-        return jsonify({"error":"Not found"}),404
-    ext = os.path.splitext(path)[1].lower()
-    try:
-        if ext in [".jpg",".png",".jpeg",".gif",".webp",".svg"]:
-            with open(path, "rb") as f:
-                encoded = base64.b64encode(f.read()).decode()
-            mime = "image/"+("svg+xml" if ext==".svg" else ext.lstrip("."))
-            return jsonify({"type":"img","data":f"data:{mime};base64,{encoded}"})
-        elif ext in [".txt",".md",".py",".js",".json",".html",".css",".sh",".log",".csv"]:
-            with open(path, encoding="utf-8", errors="ignore") as f:
-                return jsonify({"type":"txt","data":f.read()[:20000]})
-        else:
-            return jsonify({"type":"bin","data":"Tidak bisa dipreview"})
-    except Exception as e:
-        return jsonify({"type":"err","data":str(e)})
-
-# API: upload
-@app.route('/api/upload', methods=['POST'])
-def upload_file():
-    path = request.args.get('path', cwd[0])
-    f = request.files['file']
-    save_path = os.path.join(path, f.filename)
-    f.save(save_path)
-    return jsonify({"ok":True})
-
-# API: custom start path
-@app.route('/api/setcwd', methods=['POST'])
-def set_cwd():
-    path = request.json.get('path')
-    if path and os.path.isdir(path):
-        cwd[0] = path
-        return jsonify({"ok":True,"cwd":cwd[0]})
-    return jsonify({"ok":False})
-
-# API: create directory
-@app.route('/api/create-dir', methods=['POST'])
-def create_dir():
-    data = request.json
-    path = data.get('path')
-    name = data.get('name')
-    if not path or not name:
-        return jsonify({"error": "Path and name are required"}), 400
-    try:
-        os.mkdir(os.path.join(path, name))
-        return jsonify({"ok": True})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 400
-
-# API: create file
-@app.route('/api/create-file', methods=['POST'])
-def create_file():
-    data = request.json
-    path = data.get('path')
-    name = data.get('name')
-    if not path or not name:
-        return jsonify({"error": "Path and name are required"}), 400
-    try:
-        open(os.path.join(path, name), 'a').close()
-        return jsonify({"ok": True})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 400
-
-# API: rename
-@app.route('/api/rename', methods=['POST'])
-def rename_item():
-    data = request.json
-    old_path = data.get('old_path')
-    new_name = data.get('new_name')
-    if not old_path or not new_name:
-        return jsonify({"error": "Old path and new name are required"}), 400
-    try:
-        dir_path = os.path.dirname(old_path)
-        new_path = os.path.join(dir_path, new_name)
-        os.rename(old_path, new_path)
-        return jsonify({"ok": True})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 400
-
-# API: delete
-@app.route('/api/delete', methods=['POST'])
-def delete_item():
-    data = request.json
-    path = data.get('path')
     if not path:
-        return jsonify({"error": "Path is required"}), 400
+        return jsonify({'error':'missing path'}), 400
     try:
-        if os.path.isdir(path):
-            shutil.rmtree(path)
-        else:
-            os.remove(path)
-        return jsonify({"ok": True})
+        with open(path, 'rb') as f:
+            data = f.read(2*1024*1024)
+        try:
+            text = data.decode('utf-8')
+        except Exception:
+            text = data.decode('utf-8', errors='ignore')
+        return jsonify({'ok':True, 'data':text})
     except Exception as e:
-        return jsonify({"error": str(e)}), 400
+        return jsonify({'error': str(e)}), 400
 
-# --- Terminal PTY ---
-master_fd = None
-child_pid = None
 
-def setup_terminal():
-    global master_fd, child_pid
-    if child_pid:
-        return # Already started
+@app.route('/api/save-file', methods=['POST'])
+def save_file():
+    data = request.json or {}
+    path = data.get('path')
+    content = data.get('data','')
+    if not path:
+        return jsonify({'error':'missing path'}), 400
+    try:
+        parent = os.path.dirname(path) or '.'
+        os.makedirs(parent, exist_ok=True)
+        with open(path, 'w', encoding='utf-8', errors='ignore') as f:
+            f.write(content)
+        return jsonify({'ok':True})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 400
 
-    (pid, fd) = pty.fork()
-    if pid == 0: # Child
-        # Start a new shell session
-        os.chdir(START_PATH)
-        os.execv('/bin/bash', ['/bin/bash'])
-    else: # Parent
-        child_pid = pid
-        master_fd = fd
-        # Optional: set an initial command or welcome message
-        # os.write(master_fd, b"echo 'Welcome to the web terminal!'\n")
-
-def read_and_forward_pty_output():
-    global master_fd
-    while True:
-        if master_fd:
-            try:
-                select.select([master_fd], [], [], 0.1)
-                output = os.read(master_fd, 1024*20)
-                if output:
-                    socketio.emit('terminal_output', output.decode(errors='ignore'))
-            except Exception:
-                # Process might have died
-                socketio.emit('terminal_output', '\n--- Shell exited ---\n')
-                break
-        socketio.sleep(0.01)
-
-@socketio.on('connect')
-def connect():
-    if child_pid is None:
-        setup_terminal()
-
-@socketio.on('terminal_input')
-def terminal_input(data):
-    if master_fd:
-        os.write(master_fd, data.encode())
-
-@socketio.on('terminal_clear')
-def terminal_clear():
-    if master_fd:
-        os.write(master_fd, b'\033c')
 
 if __name__ == '__main__':
-    # Start the PTY reader thread
-    threading.Thread(target=read_and_forward_pty_output, daemon=True).start()
-    # Start the Flask-SocketIO server
-    socketio.run(app, host='0.0.0.0', port=8080, allow_unsafe_werkzeug=True)
+    os.makedirs('static', exist_ok=True)
+    app.run(host='0.0.0.0', port=8080)

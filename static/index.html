@@ -1,52 +1,168 @@
-<!DOCTYPE html>
-<html>
-<head>
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Termux Web Terminal</title>
-  <link rel="stylesheet" href="./static/xterm.css">
-  <link rel="stylesheet" href="./static/style.css">
-</head>
-<body>
-  <!-- Floating button always visible -->
-  <button id="fe-toggle" class="fe-float">☰</button>
-  <div id="file-explorer" class="collapsed">
-    <div id="fe-header">
-      <input id="custom-path" placeholder="Custom path" />
-      <button id="fe-goto">Go</button>
-      <button id="fe-new-file">+File</button>
-      <button id="fe-new-dir">+Folder</button>
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Terminal + Editor</title>
+<link rel="stylesheet" href="./static/xterm.css">
+<style>
+  html, body { height:100%; margin:0; background:#111; color:#eee; font-family:ui-monospace, monospace; }
+  #layout { display:flex; height:100vh; }
+  #sidebar { width: 260px; border-right:1px solid #333; overflow:auto; background:#0f0f0f; }
+  #main { position:relative; flex:1; display:flex; flex-direction:column; }
+  #editorWrap { display:none; position:relative; height:50%; border-bottom:1px solid #333; }
+  #editor { position:absolute; left:0; top:0; right:0; bottom:0; }
+  #termWrap { position:relative; flex:1; display:flex; gap:4px; padding:4px; }
+  .termPane { flex:1; position:relative; border:1px solid #333; border-radius:6px; overflow:hidden; }
+  .termPane .term { position:absolute; left:0; top:0; right:0; bottom:0; padding:6px; }
+  #bottombar { position:fixed; left:0; right:0; bottom:24px; height:56px; background:#1c1f26; border-top:1px solid #333; display:flex; align-items:center; gap:8px; padding:8px; z-index:15; }
+  #bottombar button { background:#2a2f3a; color:#fff; border:none; padding:6px 10px; border-radius:6px; cursor:pointer; }
+  #tab-prev, #tab-next { min-width:44px; }
+  #tab-label { min-width:60px; text-align:center; color:#9aa; }
+  #tab-content { display:flex; gap:8px; overflow:hidden; white-space:nowrap; }
+  #statusbar { position:fixed; left:0; right:0; bottom:0; height:24px; background:#0d1014; border-top:1px solid #333; display:flex; align-items:center; gap:12px; padding:0 8px; font-size:12px; color:#9aa; z-index:16; }
+  #path { display:flex; align-items:center; gap:8px; padding:8px; border-bottom:1px solid #333; color:#9cf; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  #path .back { background:#2a2f3a; color:#fff; border:none; padding:2px 8px; border-radius:4px; cursor:pointer; }
+  #list { list-style:none; margin:0; padding:0; outline:none; }
+  #list li { padding:6px 10px; cursor:pointer; }
+  #list li.sel { background:#1f2630; }
+  #list li .dir { color:#7ad; }
+  #list li .file { color:#eee; }
+</style>
+<div id="layout">
+  <div id="sidebar">
+    <div id="path"><button class="back" id="btn-up">⬅</button><span id="path-text"></span></div>
+    <ul id="list" tabindex="0"></ul>
+  </div>
+  <div id="main">
+    <div id="editorWrap"><div id="editor"></div></div>
+    <div id="termWrap">
+      <div class="termPane"><div id="term1" class="term"></div></div>
+      <div class="termPane" id="pane2" style="display:none"><div id="term2" class="term"></div></div>
     </div>
-    <div id="cwd-breadcrumb"></div>
-    <div id="file-list-container">
-      <table id="file-list-table">
-        <thead>
-          <tr>
-            <th>Name</th>
-            <th>Size</th>
-            <th>Modified</th>
-            <th>Actions</th>
-          </tr>
-        </thead>
-        <tbody id="file-list-body"></tbody>
-      </table>
-    </div>
-    <input type="file" id="fe-upload" style="display:none" multiple>
-    <button id="fe-upload-btn">Upload</button>
   </div>
-  <div id="preview-modal" style="display:none;">
-    <div id="preview-content"></div>
-    <button id="preview-close">×</button>
-  </div>
-  <div id="terminal"></div>
-  <div id="context-menu" style="display:none;position:absolute;background-color:#333;border:1px solid #555;z-index:100;display:flex;flex-direction:column;">
-    <button class="ctx-btn" data-action="run">▶️ Run</button>
-    <button class="ctx-btn" data-action="rename">✏️ Rename</button>
-    <button class="ctx-btn" data-action="delete">❌ Delete</button>
-    <button class="ctx-btn" data-action="download">⬇️ Download</button>
-  </div>
-  <div id="toast"></div>
-  <script src="./static/xterm.js"></script>
-  <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
-  <script src="./static/app.js"></script>
-</body>
-</html>
+</div>
+<div id="bottombar">
+  <button id="tab-prev">◀</button>
+  <span id="tab-label">Nav</span>
+  <div id="tab-content"></div>
+  <span style="flex:1"></span>
+  <button id="ar-up">↑</button>
+  <button id="ar-left">←</button>
+  <button id="ar-right">→</button>
+  <button id="ar-down">↓</button>
+  <button id="clear">Clear</button>
+  <button id="tab-next">▶</button>
+</div>
+<div id="statusbar"><span id="st-user">user@host</span><span id="st-shell">sh</span><span id="st-time">00:00:00</span><span id="st-spin" style="display:none">⏳</span><span id="st-file" style="margin-left:auto; color:#9cf;"></span></div>
+<script src="./static/xterm.min.js"></script>
+<script src="./static/xterm-addon-fit.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.51.0/min/vs/loader.min.js"></script>
+<script>
+(async function(){
+  // Status info
+  try{ const r=await fetch('/api/info'); const j=await r.json(); document.getElementById('st-user').textContent = (j.user||'user')+'@'+(j.host||'host'); document.getElementById('st-shell').textContent = (j.shell||'sh'); }catch{}
+  setInterval(()=>{ const d=new Date(); const t=[d.getHours(),d.getMinutes(),d.getSeconds()].map(x=>String(x).padStart(2,'0')).join(':'); document.getElementById('st-time').textContent=t; }, 1000);
+
+  function mkTerm(el){ const t=new Terminal({ fontFamily:'Fira Code, ui-monospace, monospace', fontSize:14, theme:{ background:'#111111' }, cursorBlink:true, scrollback:5000 }); const fit=new window.FitAddon.FitAddon(); t.loadAddon(fit); t.open(el); setTimeout(()=>{ try{ fit.fit(); }catch{} },0); window.addEventListener('resize', ()=>{ try{ fit.fit(); if(!scrollLock) t.scrollToBottom(); }catch{} }); return {t,fit}; }
+
+  const t1 = mkTerm(document.getElementById('term1'));
+  const t2 = mkTerm(document.getElementById('term2'));
+
+  let tid1=null, tid2=null, cwd=null, items=[], sel=0, focusTarget='explorer', scrollLock=false, homePath=null, split=false, logMode=false, explorerVisible=true;
+
+  function setFocus(target){ focusTarget = target; if(target==='explorer' && explorerVisible){ document.getElementById('list').focus(); } }
+  function spin(on){ document.getElementById('st-spin').style.display = on?'inline':'none'; }
+
+  async function newTerm(which){ spin(true); const r=await fetch('/api/term/new',{method:'POST'}); const j=await r.json(); if(!j.tid){ t1.t.writeln(`\r\n[ERR] ${j.error||'failed start'}`); spin(false); return; } if(which===2){ tid2=j.tid; } else { tid1=j.tid; cwd=j.home; homePath=j.home; } spin(false); }
+  async function attachOrNew(){ const saved = localStorage.getItem('tid1'); if(saved){ tid1=saved; const test=await fetch('/api/term/poll?tid='+encodeURIComponent(tid1)); if(test.status!==200){ tid1=null; localStorage.removeItem('tid1'); } } if(!tid1) await newTerm(1); localStorage.setItem('tid1', tid1); }
+  async function poll(which){ const tid=(which===2?tid2:tid1); const tx=(which===2?t2:t1); if(!tid) return; try{ const r=await fetch('/api/term/poll?tid='+encodeURIComponent(tid)); const j=await r.json(); if(j.data){ tx.t.write(j.data); if(!scrollLock){ tx.t.scrollToBottom(); } } }catch{} setTimeout(()=>poll(which),80); }
+  async function send(which, data){ const tid=(which===2?tid2:tid1); if(!tid) return; try{ spin(true); await fetch('/api/term/input',{ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ tid, data }) }); }catch(e){ (which===2?t2:t1).t.writeln(`\r\n[ERR] send failed`); } finally{ spin(false); } }
+
+  async function loadList(path){ try{ const r=await fetch('/api/list?path='+encodeURIComponent(path)+'&tid='+encodeURIComponent(tid1)); const j=await r.json(); if(j.error){ return; } cwd=j.cwd; document.getElementById('path-text').textContent=cwd; items=j.items||[]; sel=0; renderList(); }catch{} }
+  function renderList(){ const ul=document.getElementById('list'); ul.innerHTML=''; items.forEach((it,i)=>{ const li=document.createElement('li'); li.className = (i===sel?'sel':''); const span=document.createElement('span'); span.className = it.is_dir?'dir':'file'; span.textContent = (it.is_dir?'📁 ':'📄 ')+it.name; li.appendChild(span); li.onclick=()=>{ sel=i; if(it.is_dir){ loadList(cwd.replace(/\/+$/,'')+'/'+it.name); } else { openInEditor(cwd.replace(/\/+$/,'')+'/'+it.name); } setFocus('explorer'); }; li.ondblclick=()=>{ if(!it.is_dir){ openInEditor(cwd.replace(/\/+$/,'')+'/'+it.name); } }; ul.appendChild(li); }); }
+  async function openItem(){ const it=items[sel]; if(!it) return; const path=cwd.replace(/\/+$/,'')+'/'+it.name; if(it.is_dir){ loadList(path); } else { openInEditor(path); } }
+  function goUp(){ const up=cwd.replace(/\/+$/,'').replace(/\/[^\/]+$/,'')||'/'; loadList(up); }
+
+  // Sidebar keyboard navigation
+  const listEl = document.getElementById('list');
+  listEl.addEventListener('keydown', (e)=>{ if(e.key==='ArrowDown'){ sel=Math.min(sel+1, items.length-1); renderList(); e.preventDefault(); } else if(e.key==='ArrowUp'){ sel=Math.max(sel-1, 0); renderList(); e.preventDefault(); } else if(e.key==='Enter'){ openItem(); e.preventDefault(); } else if(e.key==='Backspace'){ goUp(); e.preventDefault(); } else if(e.key==='e'){ const it=items[sel]; if(it && !it.is_dir){ openInEditor(cwd.replace(/\/+$/,'')+'/'+it.name); } } });
+  listEl.addEventListener('click', ()=>setFocus('explorer'));
+  document.getElementById('term1').addEventListener('click', ()=>{ focusTarget='terminal1'; t1.t.focus(); });
+  document.getElementById('term2').addEventListener('click', ()=>{ focusTarget='terminal2'; t2.t.focus(); });
+
+  // Arrow controls
+  function arrowAction(code){ if(focusTarget==='terminal2'){ send(2, code); } else if(focusTarget==='terminal1' || !explorerVisible){ send(1, code); } else { if(code==='\x1b[A'){ sel=Math.max(sel-1, 0); renderList(); } else if(code==='\x1b[B'){ sel=Math.min(sel+1, items.length-1); renderList(); } else if(code==='\x1b[D'){ goUp(); } else if(code==='\x1b[C'){ openItem(); } } }
+  document.getElementById('ar-up').onclick = ()=> arrowAction("\x1b[A");
+  document.getElementById('ar-down').onclick = ()=> arrowAction("\x1b[B");
+  document.getElementById('ar-left').onclick = ()=> arrowAction("\x1b[D");
+  document.getElementById('ar-right').onclick = ()=> arrowAction("\x1b[C");
+
+  // Tabbed toolbar
+  const tabs=[{name:'Nav', buttons:[
+      {id:'btn-explorer', label:'Explorer: On'},
+      {id:'act-home', label:'~'},
+      {id:'act-up', label:'..'},
+      {id:'act-lsa', label:'ls -la'},
+      {id:'btn-openhere', label:'Open Here'}
+    ]},{name:'Term', buttons:[
+      {id:'btn-tab', label:'Tab'},
+      {id:'btn-esc', label:'Esc'},
+      {id:'btn-copy', label:'Copy'},
+      {id:'btn-reset', label:'Reset'},
+      {id:'btn-scroll', label:'ScrollLock: Off'}
+    ]},{name:'View', buttons:[
+      {id:'btn-split', label:'Split: Off'},
+      {id:'btn-log', label:'Log: Off'}
+    ]},{name:'Edit', buttons:[
+      {id:'btn-editor', label:'Editor: Off'},
+      {id:'btn-save', label:'Save'}
+    ]}];
+  let tabIdx = parseInt(localStorage.getItem('tabIdx')||'0',10); if(isNaN(tabIdx)) tabIdx=0;
+  function renderTab(){ const cont=document.getElementById('tab-content'); cont.innerHTML=''; const tab=tabs[tabIdx]; document.getElementById('tab-label').textContent = tab.name; tab.buttons.forEach(b=>{ const btn=document.createElement('button'); btn.id=b.id; btn.textContent=b.label; cont.appendChild(btn); }); bindTabButtons(); localStorage.setItem('tabIdx', tabIdx); }
+  document.getElementById('tab-prev').onclick = ()=>{ tabIdx=(tabIdx-1+tabs.length)%tabs.length; renderTab(); };
+  document.getElementById('tab-next').onclick = ()=>{ tabIdx=(tabIdx+1)%tabs.length; renderTab(); };
+  // Swipe
+  (function(){ const bar=document.getElementById('bottombar'); let sx=0, sy=0; bar.addEventListener('touchstart',e=>{ if(e.touches.length){ sx=e.touches[0].clientX; sy=e.touches[0].clientY; } },{passive:true}); bar.addEventListener('touchend',e=>{ const dx=(e.changedTouches[0].clientX - sx); const dy=(e.changedTouches[0].clientY - sy); if(Math.abs(dx)>50 && Math.abs(dx)>Math.abs(dy)){ if(dx<0) document.getElementById('tab-next').click(); else document.getElementById('tab-prev').click(); } }); })();
+
+  function bindTabButtons(){
+    const ex=document.getElementById('btn-explorer'); if(ex) ex.onclick=()=>{ explorerVisible=!explorerVisible; ex.textContent='Explorer: '+(explorerVisible?'On':'Off'); document.getElementById('sidebar').style.display = explorerVisible?'block':'none'; setTimeout(()=>{ try{ t1.fit && t1.fit.fit(); t2.fit && t2.fit.fit(); }catch{} }, 50); };
+    const home=document.getElementById('act-home'); if(home) home.onclick=()=> send(1, `cd ~\nls\n`);
+    const up=document.getElementById('act-up'); if(up) up.onclick=()=> send(1, `cd ..\nls\n`);
+    const lsa=document.getElementById('act-lsa'); if(lsa) lsa.onclick=()=> send(1, 'ls -la\n');
+    const oh=document.getElementById('btn-openhere'); if(oh) oh.onclick=()=>{ if(cwd){ send(1, `cd "${cwd.replace(/\"/g,'\\\"')}"\nls\n`); } };
+    const tabb=document.getElementById('btn-tab'); if(tabb) tabb.onclick=()=>{ if(focusTarget==='terminal2') send(2,'\t'); else send(1,'\t'); };
+    const esc=document.getElementById('btn-esc'); if(esc) esc.onclick=()=>{ if(focusTarget==='terminal2') send(2,'\x1b'); else send(1,'\x1b'); };
+    const copy=document.getElementById('btn-copy'); if(copy) copy.onclick=()=>{ try{ const sel=window.getSelection().toString(); if(sel){ navigator.clipboard.writeText(sel); } }catch{} };
+    const reset=document.getElementById('btn-reset'); if(reset) reset.onclick=async ()=>{ if(tid1){ await fetch('/api/term/close',{method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({tid:tid1})}); tid1=null; localStorage.removeItem('tid1'); } t1.t.write('\r\n[reset]\r\n'); await attachOrNew(); poll(1); loadList(homePath||cwd); };
+    const scr=document.getElementById('btn-scroll'); if(scr) scr.onclick=()=>{ scrollLock=!scrollLock; scr.textContent = 'ScrollLock: ' + (scrollLock?'On':'Off'); };
+    const splitBtn=document.getElementById('btn-split'); if(splitBtn) splitBtn.onclick=async ()=>{ const pane2=document.getElementById('pane2'); split=!split; splitBtn.textContent='Split: '+(split?'On':'Off'); if(split){ pane2.style.display='block'; if(!tid2){ await newTerm(2); poll(2); } } else { pane2.style.display='none'; } };
+    const logBtn=document.getElementById('btn-log'); if(logBtn) logBtn.onclick=async ()=>{ logMode=!logMode; logBtn.textContent='Log: '+(logMode?'On':'Off'); if(logMode){ const p=prompt('Path file utk tail -f:'); if(!p){ logMode=false; logBtn.textContent='Log: Off'; return; } if(!tid2){ await newTerm(2); poll(2); split=true; document.getElementById('pane2').style.display='block'; if(splitBtn) splitBtn.textContent='Split: On'; } t2.t.clear(); await send(2, `tail -f "${p.replace(/\"/g,'\\\"')}"\n`); } else { if(tid2){ await send(2, '\x03'); } } };
+    const edBtn=document.getElementById('btn-editor'); if(edBtn) edBtn.onclick=()=>{ const on = document.getElementById('editorWrap').style.display!=='block'; showEditor(on); };
+    const saveBtn=document.getElementById('btn-save'); if(saveBtn) saveBtn.onclick=async ()=>{ if(!currentFile||!editor) return; const data=editor.getValue(); const r=await fetch('/api/save-file',{ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ path:currentFile, data }) }); const j=await r.json(); if(!j.ok){ alert(j.error||'Gagal simpan'); } };
+  }
+
+  // back button
+  document.getElementById('btn-up').onclick = ()=>{ goUp(); setFocus('explorer'); };
+  // clear
+  document.getElementById('clear').onclick = ()=>{ if(focusTarget==='terminal2' && tid2) fetch('/api/term/clear',{method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({tid:tid2})}); else if(tid1) fetch('/api/term/clear',{method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({tid:tid1})}); };
+
+  // Editor (Monaco)
+  let editor=null, monacoLoaded=false, currentFile=null;
+  function showEditor(on){ document.getElementById('editorWrap').style.display = on?'block':'none'; const edBtn=document.getElementById('btn-editor'); if(edBtn) edBtn.textContent = 'Editor: ' + (on?'On':'Off'); const saveBtn=document.getElementById('btn-save'); if(saveBtn) saveBtn.style.display = on?'inline-block':'none'; }
+  function ensureMonaco(cb){ if(monacoLoaded){ cb(); return; } require.config({ paths: { 'vs': 'https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.51.0/min/vs' } }); require(['vs/editor/editor.main'], ()=>{ monacoLoaded=true; cb(); }); }
+  async function openInEditor(path){ try{ const r=await fetch('/api/read-file?path='+encodeURIComponent(path)); const j=await r.json(); if(!j.ok){ alert(j.error||'Gagal baca file'); return; } ensureMonaco(()=>{ showEditor(true); currentFile=path; document.getElementById('st-file').textContent=path; if(!editor){ editor = monaco.editor.create(document.getElementById('editor'), { value:j.data||'', language:'plaintext', theme:'vs-dark', automaticLayout:true, fontSize:14 }); } else { editor.setValue(j.data||''); } }); }catch(e){ alert('Gagal membuka: '+e); } }
+
+  // Term input
+  t1.t.onData(d => { focusTarget='terminal1'; send(1,d); });
+  t2.t.onData(d => { focusTarget='terminal2'; send(2,d); });
+
+  // Tabs render and navigation
+  const tabs=[{name:'Nav', buttons:['btn-explorer','act-home','act-up','act-lsa','btn-openhere']},{name:'Term', buttons:['btn-tab','btn-esc','btn-copy','btn-reset','btn-scroll']},{name:'View', buttons:['btn-split','btn-log']},{name:'Edit', buttons:['btn-editor','btn-save']}];
+  let tabIdx = parseInt(localStorage.getItem('tabIdx')||'0',10); if(isNaN(tabIdx)) tabIdx=0;
+  function renderTab(){ const cont=document.getElementById('tab-content'); cont.innerHTML=''; const tab=tabs[tabIdx]; document.getElementById('tab-label').textContent=tab.name; const labels={ 'btn-explorer':'Explorer: On','act-home':'~','act-up':'..','act-lsa':'ls -la','btn-openhere':'Open Here','btn-tab':'Tab','btn-esc':'Esc','btn-copy':'Copy','btn-reset':'Reset','btn-scroll':'ScrollLock: Off','btn-split':'Split: Off','btn-log':'Log: Off','btn-editor':'Editor: Off','btn-save':'Save' }; tab.buttons.forEach(id=>{ const b=document.createElement('button'); b.id=id; b.textContent=labels[id]||id; cont.appendChild(b); }); bindTabButtons(); localStorage.setItem('tabIdx', tabIdx); }
+  document.getElementById('tab-prev').onclick=()=>{ tabIdx=(tabIdx-1+tabs.length)%tabs.length; renderTab(); };
+  document.getElementById('tab-next').onclick=()=>{ tabIdx=(tabIdx+1)%tabs.length; renderTab(); };
+  (function(){ const bar=document.getElementById('bottombar'); let sx=0, sy=0; bar.addEventListener('touchstart',e=>{ if(e.touches.length){ sx=e.touches[0].clientX; sy=e.touches[0].clientY; } },{passive:true}); bar.addEventListener('touchend',e=>{ const dx=(e.changedTouches[0].clientX - sx); const dy=(e.changedTouches[0].clientY - sy); if(Math.abs(dx)>50 && Math.abs(dx)>Math.abs(dy)){ if(dx<0) document.getElementById('tab-next').click(); else document.getElementById('tab-prev').click(); } }); })();
+
+  await attachOrNew(); poll(1); loadList(homePath||cwd); renderTab();
+})();
+</script>
