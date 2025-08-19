@@ -1,73 +1,63 @@
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Web Terminal & File Manager</title>
-  <link rel="stylesheet" href="./static/xterm.css">
-  <link rel="stylesheet" href="./static/style.css">
-</head>
-<body>
-  <button id="fe-toggle" class="fe-float">☰</button>
-  <div id="file-explorer" class="collapsed">
-    <div id="fe-header">
-      <input id="custom-path" placeholder="Custom path" />
-      <button id="fe-goto">Go</button>
-      <button id="fe-new-file">+File</button>
-      <button id="fe-new-dir">+Folder</button>
-      <button id="fe-refresh">↻</button>
-      <button id="fe-hidden">Hidden: Off</button>
-    </div>
-    <div id="cwd-breadcrumb"></div>
-    <div id="file-list-container">
-      <table id="file-list-table">
-        <thead>
-          <tr>
-            <th>Name</th>
-            <th>Size</th>
-            <th>Modified</th>
-            <th>Actions</th>
-          </tr>
-        </thead>
-        <tbody id="file-list-body"></tbody>
-      </table>
-    </div>
-    <input type="file" id="fe-upload" style="display:none" multiple>
-    <button id="fe-upload-btn">Upload</button>
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Minimal Terminal</title>
+<style>
+  body { background:#111; color:#eee; font-family:ui-monospace, monospace; margin:0; }
+  #wrap { display:flex; flex-direction:column; height:100vh; }
+  #out { flex:1; padding:10px; white-space:pre-wrap; overflow:auto; background:#000; }
+  #bar { display:flex; gap:6px; padding:8px; background:#222; border-top:1px solid #333; }
+  #in { flex:1; background:#111; color:#fff; border:1px solid #333; border-radius:4px; padding:6px; }
+  button { background:#2a2f3a; color:#fff; border:none; padding:6px 10px; border-radius:4px; }
+</style>
+<div id="wrap">
+  <pre id="out"></pre>
+  <div id="bar">
+    <input id="in" placeholder="Type command then Enter">
+    <button id="send">Send</button>
+    <button id="clear">Clear</button>
   </div>
+</div>
+<script>
+(async function(){
+  const out = document.getElementById('out');
+  const input = document.getElementById('in');
+  const sendBtn = document.getElementById('send');
+  const clearBtn = document.getElementById('clear');
+  let tid = null;
 
-  <div id="main">
-    <div id="topbar">
-      <div id="active-file">No file</div>
-      <div class="actions">
-        <button id="theme-toggle">Theme</button>
-        <button id="save-btn">Save (Ctrl+S)</button>
-      </div>
-    </div>
-    <div id="editor"></div>
-    <div id="h-split"></div>
-    <div id="terminal-container"></div>
-  </div>
+  function append(txt){ out.textContent += txt; out.scrollTop = out.scrollHeight; }
 
-  <div id="preview-modal" style="display:none;">
-    <div id="preview-content"></div>
-    <button id="preview-close">×</button>
-  </div>
+  async function newTerm(){
+    const r = await fetch('/api/term/new', {method:'POST'});
+    const j = await r.json();
+    if(!j.tid){ append('\n[ERR] '+(j.error||'failed start')+'\n'); return; }
+    tid = j.tid; append('[OK] terminal ready (tid='+tid+')\n'); poll();
+  }
 
-  <div id="context-menu" style="display:none;position:absolute;background-color:#333;border:1px solid #555;z-index:100;display:flex;flex-direction:column;">
-    <button class="ctx-btn" data-action="run">▶️ Run</button>
-    <button class="ctx-btn" data-action="rename">✏️ Rename</button>
-    <button class="ctx-btn" data-action="delete">❌ Delete</button>
-    <button class="ctx-btn" data-action="download">⬇️ Download</button>
-  </div>
-  <div id="toast"></div>
+  async function poll(){
+    if(!tid) return;
+    try{
+      const r = await fetch('/api/term/poll?tid='+encodeURIComponent(tid));
+      const j = await r.json(); if(j.data){ append(j.data); }
+    }catch{}
+    setTimeout(poll, 150);
+  }
 
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.51.0/min/vs/loader.min.js"></script>
-  <script src="./static/xterm.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/xterm-addon-web-links@0.8.0/lib/xterm-addon-web-links.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/xterm-addon-search@0.14.0/lib/xterm-addon-search.min.js"></script>
-  <script src="./static/socket.io.min.js"></script>
-  <script src="./static/app.js"></script>
-</body>
-</html>
+  async function send(cmd){
+    if(!tid) return;
+    try{
+      await fetch('/api/term/input', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ tid, data: cmd.endsWith('\n')?cmd:(cmd+'\n') })
+      });
+    }catch(e){ append('\n[ERR] send failed\n'); }
+  }
+
+  sendBtn.onclick = ()=>{ if(input.value) { send(input.value); input.value=''; input.focus(); } };
+  input.onkeydown = (e)=>{ if(e.key==='Enter'){ sendBtn.click(); } };
+  clearBtn.onclick = ()=>{ if(tid) fetch('/api/term/clear',{method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({tid})}); };
+
+  await newTerm(); input.focus();
+})();
+</script>
