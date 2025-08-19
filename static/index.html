@@ -8,9 +8,11 @@
   #layout { display:flex; height:100vh; }
   #sidebar { width: 260px; border-right:1px solid #333; overflow:auto; background:#0f0f0f; }
   #main { position:relative; flex:1; }
-  #top { position:absolute; top:8px; right:8px; z-index:10; }
+  #top { position:absolute; top:8px; right:8px; z-index:10; display:flex; gap:6px; }
   #top button { background:#2a2f3a; color:#fff; border:none; padding:6px 10px; border-radius:4px; cursor:pointer; }
-  #term { position:absolute; left:0; top:0; right:0; bottom:0; padding:8px; }
+  #term { position:absolute; left:0; top:36px; right:0; bottom:0; padding:8px; }
+  #toolbar { position:absolute; left:8px; top:6px; z-index:10; display:flex; gap:6px; }
+  #toolbar button { background:#2a2f3a; color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; }
   #path { display:flex; align-items:center; gap:8px; padding:8px; border-bottom:1px solid #333; color:#9cf; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   #path .back { background:#2a2f3a; color:#fff; border:none; padding:2px 8px; border-radius:4px; cursor:pointer; }
   #list { list-style:none; margin:0; padding:0; outline:none; }
@@ -31,6 +33,16 @@
     <ul id="list" tabindex="0"></ul>
   </div>
   <div id="main">
+    <div id="toolbar">
+      <button id="act-home">~</button>
+      <button id="act-up">..</button>
+      <button id="act-lsa">ls -la</button>
+      <button id="btn-tab">Tab</button>
+      <button id="btn-esc">Esc</button>
+      <button id="btn-copy">Copy</button>
+      <button id="btn-reset">Reset</button>
+      <button id="btn-scroll">ScrollLock: Off</button>
+    </div>
     <div id="top"><button id="clear">Clear</button></div>
     <div id="term"></div>
   </div>
@@ -42,14 +54,17 @@
   <button class="btn" id="dp-down">↓</button>
 </div>
 <script src="./static/xterm.min.js"></script>
+<script src="./static/xterm-addon-fit.min.js"></script>
 <script>
 (async function(){
   const term = new Terminal({ fontFamily: 'Fira Code, ui-monospace, monospace', fontSize: 14, theme: { background: '#111111' }, cursorBlink: true, scrollback: 5000 });
+  const fit = new window.FitAddon.FitAddon(); term.loadAddon(fit);
   const termEl = document.getElementById('term');
-  term.open(termEl);
-  window.addEventListener('resize', ()=>{ try{ term.scrollToBottom(); }catch{} });
+  term.open(termEl); setTimeout(()=>{ try{ fit.fit(); }catch{} }, 0);
+  window.addEventListener('resize', ()=>{ try{ fit.fit(); term.scrollToBottom(); }catch{} });
 
-  let tid=null, cwd=null, items=[], sel=0, focusTarget='explorer';
+  let tid=null, cwd=null, items=[], sel=0, focusTarget='explorer', scrollLock=false;
+  const history=[]; let histIdx=-1; // simple history for on-screen Tab/Esc usage
 
   function setFocus(target){ focusTarget = target; if(target==='explorer'){ document.getElementById('list').focus(); } }
 
@@ -61,10 +76,10 @@
     poll(); loadList(cwd); setFocus('explorer');
   }
 
-  async function poll(){ if(!tid) return; try{ const r=await fetch('/api/term/poll?tid='+encodeURIComponent(tid)); const j=await r.json(); if(j.data){ term.write(j.data); } }catch{} setTimeout(poll,80); }
+  async function poll(){ if(!tid) return; try{ const r=await fetch('/api/term/poll?tid='+encodeURIComponent(tid)); const j=await r.json(); if(j.data){ term.write(j.data); if(!scrollLock){ term.scrollToBottom(); } } }catch{} setTimeout(poll,80); }
   async function send(data){ if(!tid) return; try{ await fetch('/api/term/input',{ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ tid, data }) }); }catch(e){ term.writeln(`\r\n[ERR] send failed`); } }
 
-  async function loadList(path){ try{ const r=await fetch('/api/list?path='+encodeURIComponent(path)+'&tid='+encodeURIComponent(tid)); const j=await r.json(); if(j.error){ return; } cwd=j.cwd; document.getElementById('path-text').textContent=cwd; items=j.items||[]; sel=Math.min(sel, Math.max(0, items.length-1)); renderList(); }catch{} }
+  async function loadList(path){ try{ const r=await fetch('/api/list?path='+encodeURIComponent(path)+'&tid='+encodeURIComponent(tid)); const j=await r.json(); if(j.error){ return; } cwd=j.cwd; document.getElementById('path-text').textContent=cwd; items=j.items||[]; sel=0; renderList(); }catch{} }
 
   function renderList(){ const ul=document.getElementById('list'); ul.innerHTML=''; items.forEach((it,i)=>{ const li=document.createElement('li'); li.className = (i===sel?'sel':''); const span=document.createElement('span'); span.className = it.is_dir?'dir':'file'; span.textContent = (it.is_dir?'📁 ':'📄 ')+it.name; li.appendChild(span); li.onclick=()=>{ sel=i; openItem(); setFocus('explorer'); }; ul.appendChild(li); }); }
 
@@ -84,11 +99,26 @@
   document.getElementById('dp-left').onclick = ()=>{ if(focusTarget==='explorer'){ goUp(); } else { send("\x1b[D"); } };
   document.getElementById('dp-right').onclick = ()=>{ if(focusTarget==='explorer'){ openItem(); } else { send("\x1b[C"); } };
 
-  // Back button in header
+  // Header actions
   document.getElementById('btn-up').onclick = ()=>{ goUp(); setFocus('explorer'); };
-
-  term.onData(d => { focusTarget='terminal'; send(d); });
   document.getElementById('clear').onclick = ()=>{ if(tid) fetch('/api/term/clear',{method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({tid})}); };
+
+  // Toolbar actions
+  document.getElementById('act-home').onclick = ()=>{ const home=cwd.split('/')[0]===''?'/':(cwd.startsWith('/data/data')?('/data/data/com.termux/files/home'):('/')); send(`cd ~\n`); send('ls\n'); loadList(home); };
+  document.getElementById('act-up').onclick = ()=> goUp();
+  document.getElementById('act-lsa').onclick = ()=> send('ls -la\n');
+  document.getElementById('btn-tab').onclick = ()=> send('\t');
+  document.getElementById('btn-esc').onclick = ()=> send('\x1b');
+  document.getElementById('btn-copy').onclick = ()=>{ try{ const sel=window.getSelection().toString(); if(sel){ navigator.clipboard.writeText(sel); } }catch{} };
+  document.getElementById('btn-reset').onclick = async ()=>{ if(!tid) return; await fetch('/api/term/close',{method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({tid})}); tid=null; term.write('\r\n[reset]\r\n'); await newTerm(); };
+  document.getElementById('btn-scroll').onclick = ()=>{ scrollLock=!scrollLock; document.getElementById('btn-scroll').textContent = 'ScrollLock: ' + (scrollLock?'On':'Off'); };
+
+  // Simple history when using D-pad to inject text (not intercepting real term input)
+  function pushHistory(cmd){ if(cmd && (history.length===0 || history[history.length-1]!==cmd)){ history.push(cmd); if(history.length>200) history.shift(); } histIdx=history.length; }
+  // Example usage: quick send from toolbar updates history
+  ['act-lsa'].forEach(id=>{ const el=document.getElementById(id); el.addEventListener('click', ()=>pushHistory('ls -la')); });
+
+  term.onData(d => { focusTarget='terminal'; if(d==='\r'){ /* enter pressed */ } send(d); });
 
   await newTerm();
 })();
