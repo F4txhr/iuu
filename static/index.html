@@ -8,11 +8,9 @@
   #layout { display:flex; height:100vh; }
   #sidebar { width: 260px; border-right:1px solid #333; overflow:auto; background:#0f0f0f; }
   #main { position:relative; flex:1; }
-  #top { position:absolute; top:8px; right:8px; z-index:10; display:flex; gap:6px; }
-  #top button { background:#2a2f3a; color:#fff; border:none; padding:6px 10px; border-radius:4px; cursor:pointer; }
-  #term { position:absolute; left:0; top:36px; right:0; bottom:0; padding:8px; }
-  #toolbar { position:absolute; left:8px; top:6px; z-index:10; display:flex; gap:6px; }
-  #toolbar button { background:#2a2f3a; color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; }
+  #term { position:absolute; left:0; top:0; right:0; bottom:64px; padding:8px; }
+  #bottombar { position:fixed; left:0; right:0; bottom:0; height:56px; background:#1c1f26; border-top:1px solid #333; display:flex; align-items:center; gap:8px; padding:8px; z-index:15; }
+  #bottombar button { background:#2a2f3a; color:#fff; border:none; padding:6px 10px; border-radius:6px; cursor:pointer; }
   #path { display:flex; align-items:center; gap:8px; padding:8px; border-bottom:1px solid #333; color:#9cf; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   #path .back { background:#2a2f3a; color:#fff; border:none; padding:2px 8px; border-radius:4px; cursor:pointer; }
   #list { list-style:none; margin:0; padding:0; outline:none; }
@@ -20,7 +18,7 @@
   #list li.sel { background:#1f2630; }
   #list li .dir { color:#7ad; }
   #list li .file { color:#eee; }
-  #dpad { position:fixed; right:12px; bottom:12px; width:140px; height:140px; }
+  #dpad { position:fixed; right:12px; bottom:72px; width:140px; height:140px; z-index:20; }
   #dpad .btn { position:absolute; width:44px; height:44px; background:#2a2f3a; color:#fff; border:none; border-radius:8px; cursor:pointer; font-size:18px; }
   #dp-up { left:48px; top:0; }
   #dp-left { left:0; top:48px; }
@@ -33,19 +31,19 @@
     <ul id="list" tabindex="0"></ul>
   </div>
   <div id="main">
-    <div id="toolbar">
-      <button id="act-home">~</button>
-      <button id="act-up">..</button>
-      <button id="act-lsa">ls -la</button>
-      <button id="btn-tab">Tab</button>
-      <button id="btn-esc">Esc</button>
-      <button id="btn-copy">Copy</button>
-      <button id="btn-reset">Reset</button>
-      <button id="btn-scroll">ScrollLock: Off</button>
-    </div>
-    <div id="top"><button id="clear">Clear</button></div>
     <div id="term"></div>
   </div>
+</div>
+<div id="bottombar">
+  <button id="act-home">~</button>
+  <button id="act-up">..</button>
+  <button id="act-lsa">ls -la</button>
+  <button id="btn-tab">Tab</button>
+  <button id="btn-esc">Esc</button>
+  <button id="btn-copy">Copy</button>
+  <button id="btn-reset">Reset</button>
+  <button id="btn-scroll">ScrollLock: Off</button>
+  <button id="clear" style="margin-left:auto">Clear</button>
 </div>
 <div id="dpad">
   <button class="btn" id="dp-up">↑</button>
@@ -61,10 +59,9 @@
   const fit = new window.FitAddon.FitAddon(); term.loadAddon(fit);
   const termEl = document.getElementById('term');
   term.open(termEl); setTimeout(()=>{ try{ fit.fit(); }catch{} }, 0);
-  window.addEventListener('resize', ()=>{ try{ fit.fit(); term.scrollToBottom(); }catch{} });
+  window.addEventListener('resize', ()=>{ try{ fit.fit(); if(!scrollLock) term.scrollToBottom(); }catch{} });
 
-  let tid=null, cwd=null, items=[], sel=0, focusTarget='explorer', scrollLock=false;
-  const history=[]; let histIdx=-1; // simple history for on-screen Tab/Esc usage
+  let tid=null, cwd=null, items=[], sel=0, focusTarget='explorer', scrollLock=false, homePath=null;
 
   function setFocus(target){ focusTarget = target; if(target==='explorer'){ document.getElementById('list').focus(); } }
 
@@ -72,7 +69,7 @@
     const r = await fetch('/api/term/new', {method:'POST'});
     const j = await r.json();
     if(!j.tid){ term.writeln(`\r\n[ERR] ${j.error||'failed start'}`); return; }
-    tid=j.tid; cwd=j.home; term.writeln(`[OK] terminal ready (tid=${tid})`);
+    tid=j.tid; cwd=j.home; homePath=j.home; term.writeln(`[OK] terminal ready (tid=${tid})`);
     poll(); loadList(cwd); setFocus('explorer');
   }
 
@@ -99,12 +96,11 @@
   document.getElementById('dp-left').onclick = ()=>{ if(focusTarget==='explorer'){ goUp(); } else { send("\x1b[D"); } };
   document.getElementById('dp-right').onclick = ()=>{ if(focusTarget==='explorer'){ openItem(); } else { send("\x1b[C"); } };
 
-  // Header actions
+  // Header back
   document.getElementById('btn-up').onclick = ()=>{ goUp(); setFocus('explorer'); };
-  document.getElementById('clear').onclick = ()=>{ if(tid) fetch('/api/term/clear',{method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({tid})}); };
 
-  // Toolbar actions
-  document.getElementById('act-home').onclick = ()=>{ const home=cwd.split('/')[0]===''?'/':(cwd.startsWith('/data/data')?('/data/data/com.termux/files/home'):('/')); send(`cd ~\n`); send('ls\n'); loadList(home); };
+  // Bottom bar actions
+  document.getElementById('act-home').onclick = ()=>{ send(`cd ~\n`); send('ls\n'); if(homePath) loadList(homePath); };
   document.getElementById('act-up').onclick = ()=> goUp();
   document.getElementById('act-lsa').onclick = ()=> send('ls -la\n');
   document.getElementById('btn-tab').onclick = ()=> send('\t');
@@ -112,13 +108,9 @@
   document.getElementById('btn-copy').onclick = ()=>{ try{ const sel=window.getSelection().toString(); if(sel){ navigator.clipboard.writeText(sel); } }catch{} };
   document.getElementById('btn-reset').onclick = async ()=>{ if(!tid) return; await fetch('/api/term/close',{method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({tid})}); tid=null; term.write('\r\n[reset]\r\n'); await newTerm(); };
   document.getElementById('btn-scroll').onclick = ()=>{ scrollLock=!scrollLock; document.getElementById('btn-scroll').textContent = 'ScrollLock: ' + (scrollLock?'On':'Off'); };
+  document.getElementById('clear').onclick = ()=>{ if(tid) fetch('/api/term/clear',{method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({tid})}); };
 
-  // Simple history when using D-pad to inject text (not intercepting real term input)
-  function pushHistory(cmd){ if(cmd && (history.length===0 || history[history.length-1]!==cmd)){ history.push(cmd); if(history.length>200) history.shift(); } histIdx=history.length; }
-  // Example usage: quick send from toolbar updates history
-  ['act-lsa'].forEach(id=>{ const el=document.getElementById(id); el.addEventListener('click', ()=>pushHistory('ls -la')); });
-
-  term.onData(d => { focusTarget='terminal'; if(d==='\r'){ /* enter pressed */ } send(d); });
+  term.onData(d => { focusTarget='terminal'; send(d); });
 
   await newTerm();
 })();
