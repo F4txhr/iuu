@@ -8,9 +8,12 @@
   #layout { display:flex; height:100vh; }
   #sidebar { width: 260px; border-right:1px solid #333; overflow:auto; background:#0f0f0f; }
   #main { position:relative; flex:1; }
-  #term { position:absolute; left:0; top:0; right:0; bottom:64px; padding:8px; }
-  #bottombar { position:fixed; left:0; right:0; bottom:0; height:56px; background:#1c1f26; border-top:1px solid #333; display:flex; align-items:center; gap:8px; padding:8px; z-index:15; }
+  #termWrap { position:absolute; left:0; top:0; right:0; bottom:84px; display:flex; gap:4px; padding:4px; }
+  .termPane { flex:1; position:relative; border:1px solid #333; border-radius:6px; overflow:hidden; }
+  .termPane .term { position:absolute; left:0; top:0; right:0; bottom:0; padding:6px; }
+  #bottombar { position:fixed; left:0; right:0; bottom:24px; height:56px; background:#1c1f26; border-top:1px solid #333; display:flex; align-items:center; gap:8px; padding:8px; z-index:15; }
   #bottombar button { background:#2a2f3a; color:#fff; border:none; padding:6px 10px; border-radius:6px; cursor:pointer; }
+  #statusbar { position:fixed; left:0; right:0; bottom:0; height:24px; background:#0d1014; border-top:1px solid #333; display:flex; align-items:center; gap:12px; padding:0 8px; font-size:12px; color:#9aa; z-index:16; }
   #path { display:flex; align-items:center; gap:8px; padding:8px; border-bottom:1px solid #333; color:#9cf; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   #path .back { background:#2a2f3a; color:#fff; border:none; padding:2px 8px; border-radius:4px; cursor:pointer; }
   #list { list-style:none; margin:0; padding:0; outline:none; }
@@ -18,7 +21,7 @@
   #list li.sel { background:#1f2630; }
   #list li .dir { color:#7ad; }
   #list li .file { color:#eee; }
-  #dpad { position:fixed; right:12px; bottom:72px; width:140px; height:140px; z-index:20; }
+  #dpad { position:fixed; right:12px; bottom:88px; width:140px; height:140px; z-index:20; }
   #dpad .btn { position:absolute; width:44px; height:44px; background:#2a2f3a; color:#fff; border:none; border-radius:8px; cursor:pointer; font-size:18px; }
   #dp-up { left:48px; top:0; }
   #dp-left { left:0; top:48px; }
@@ -31,7 +34,10 @@
     <ul id="list" tabindex="0"></ul>
   </div>
   <div id="main">
-    <div id="term"></div>
+    <div id="termWrap">
+      <div class="termPane"><div id="term1" class="term"></div></div>
+      <div class="termPane" id="pane2" style="display:none"><div id="term2" class="term"></div></div>
+    </div>
   </div>
 </div>
 <div id="bottombar">
@@ -43,8 +49,11 @@
   <button id="btn-copy">Copy</button>
   <button id="btn-reset">Reset</button>
   <button id="btn-scroll">ScrollLock: Off</button>
+  <button id="btn-split">Split: Off</button>
+  <button id="btn-log">Log: Off</button>
   <button id="clear" style="margin-left:auto">Clear</button>
 </div>
+<div id="statusbar"><span id="st-user">user@host</span><span id="st-shell">sh</span><span id="st-time">00:00:00</span><span id="st-spin" style="display:none">⏳</span></div>
 <div id="dpad">
   <button class="btn" id="dp-up">↑</button>
   <button class="btn" id="dp-left">←</button>
@@ -55,63 +64,77 @@
 <script src="./static/xterm-addon-fit.min.js"></script>
 <script>
 (async function(){
-  const term = new Terminal({ fontFamily: 'Fira Code, ui-monospace, monospace', fontSize: 14, theme: { background: '#111111' }, cursorBlink: true, scrollback: 5000 });
-  const fit = new window.FitAddon.FitAddon(); term.loadAddon(fit);
-  const termEl = document.getElementById('term');
-  term.open(termEl); setTimeout(()=>{ try{ fit.fit(); }catch{} }, 0);
-  window.addEventListener('resize', ()=>{ try{ fit.fit(); if(!scrollLock) term.scrollToBottom(); }catch{} });
+  // Status info
+  try{ const r=await fetch('/api/info'); const j=await r.json(); document.getElementById('st-user').textContent = (j.user||'user')+'@'+(j.host||'host'); document.getElementById('st-shell').textContent = (j.shell||'sh'); }catch{}
+  setInterval(()=>{ const d=new Date(); const t=[d.getHours(),d.getMinutes(),d.getSeconds()].map(x=>String(x).padStart(2,'0')).join(':'); document.getElementById('st-time').textContent=t; }, 1000);
 
-  let tid=null, cwd=null, items=[], sel=0, focusTarget='explorer', scrollLock=false, homePath=null;
+  function mkTerm(el){ const t=new Terminal({ fontFamily:'Fira Code, ui-monospace, monospace', fontSize:14, theme:{ background:'#111111' }, cursorBlink:true, scrollback:5000 }); const fit=new window.FitAddon.FitAddon(); t.loadAddon(fit); t.open(el); setTimeout(()=>{ try{ fit.fit(); }catch{} },0); window.addEventListener('resize', ()=>{ try{ fit.fit(); if(!scrollLock) t.scrollToBottom(); }catch{} }); return {t,fit}; }
+
+  const t1 = mkTerm(document.getElementById('term1'));
+  const t2 = mkTerm(document.getElementById('term2'));
+
+  let tid1=null, tid2=null, cwd=null, items=[], sel=0, focusTarget='explorer', scrollLock=false, homePath=null, split=false, logMode=false, logPath='';
 
   function setFocus(target){ focusTarget = target; if(target==='explorer'){ document.getElementById('list').focus(); } }
+  function spin(on){ document.getElementById('st-spin').style.display = on?'inline':'none'; }
 
-  async function newTerm(){
-    const r = await fetch('/api/term/new', {method:'POST'});
-    const j = await r.json();
-    if(!j.tid){ term.writeln(`\r\n[ERR] ${j.error||'failed start'}`); return; }
-    tid=j.tid; cwd=j.home; homePath=j.home; term.writeln(`[OK] terminal ready (tid=${tid})`);
-    poll(); loadList(cwd); setFocus('explorer');
+  async function newTerm(which){ spin(true); const r=await fetch('/api/term/new',{method:'POST'}); const j=await r.json(); if(!j.tid){ t1.t.writeln(`\r\n[ERR] ${j.error||'failed start'}`); spin(false); return; } if(which===2){ tid2=j.tid; } else { tid1=j.tid; cwd=j.home; homePath=j.home; } spin(false); }
+
+  async function attachOrNew(){ // auto-attach tid1
+    const saved = localStorage.getItem('tid1');
+    if(saved){ tid1=saved; // try poll once
+      const test=await fetch('/api/term/poll?tid='+encodeURIComponent(tid1)); if(test.status!==200){ tid1=null; }
+    }
+    if(!tid1) await newTerm(1);
+    localStorage.setItem('tid1', tid1);
   }
 
-  async function poll(){ if(!tid) return; try{ const r=await fetch('/api/term/poll?tid='+encodeURIComponent(tid)); const j=await r.json(); if(j.data){ term.write(j.data); if(!scrollLock){ term.scrollToBottom(); } } }catch{} setTimeout(poll,80); }
-  async function send(data){ if(!tid) return; try{ await fetch('/api/term/input',{ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ tid, data }) }); }catch(e){ term.writeln(`\r\n[ERR] send failed`); } }
+  async function poll(which){ const tid=(which===2?tid2:tid1); const tx=(which===2?t2:t1); if(!tid) return; try{ const r=await fetch('/api/term/poll?tid='+encodeURIComponent(tid)); const j=await r.json(); if(j.data){ tx.t.write(j.data); if(!scrollLock){ tx.t.scrollToBottom(); } } }catch{} setTimeout(()=>poll(which),80); }
 
-  async function loadList(path){ try{ const r=await fetch('/api/list?path='+encodeURIComponent(path)+'&tid='+encodeURIComponent(tid)); const j=await r.json(); if(j.error){ return; } cwd=j.cwd; document.getElementById('path-text').textContent=cwd; items=j.items||[]; sel=0; renderList(); }catch{} }
+  async function send(which, data){ const tid=(which===2?tid2:tid1); if(!tid) return; try{ spin(true); await fetch('/api/term/input',{ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ tid, data }) }); }catch(e){ (which===2?t2:t1).t.writeln(`\r\n[ERR] send failed`); } finally{ spin(false); } }
+
+  async function loadList(path){ try{ const r=await fetch('/api/list?path='+encodeURIComponent(path)+'&tid='+encodeURIComponent(tid1)); const j=await r.json(); if(j.error){ return; } cwd=j.cwd; document.getElementById('path-text').textContent=cwd; items=j.items||[]; sel=0; renderList(); }catch{} }
 
   function renderList(){ const ul=document.getElementById('list'); ul.innerHTML=''; items.forEach((it,i)=>{ const li=document.createElement('li'); li.className = (i===sel?'sel':''); const span=document.createElement('span'); span.className = it.is_dir?'dir':'file'; span.textContent = (it.is_dir?'📁 ':'📄 ')+it.name; li.appendChild(span); li.onclick=()=>{ sel=i; openItem(); setFocus('explorer'); }; ul.appendChild(li); }); }
 
-  async function openItem(){ const it=items[sel]; if(!it) return; const path=cwd.replace(/\/+$/,'')+'/'+it.name; if(it.is_dir){ await send(`cd "${path.replace(/\"/g,'\\\"')}"\n`); await send(`ls\n`); loadList(path); } else { await send(`xdg-open "${path.replace(/\"/g,'\\\"')}"\n`); } }
+  async function openItem(){ const it=items[sel]; if(!it) return; const path=cwd.replace(/\/+$/,'')+'/'+it.name; if(it.is_dir){ await send(1, `cd "${path.replace(/\"/g,'\\\"')}"\n`); await send(1, `ls\n`); loadList(path); } else { await send(1, `xdg-open "${path.replace(/\"/g,'\\\"')}"\n`); } }
 
-  function goUp(){ const up=cwd.replace(/\/+$/,'').replace(/\/[^\/]+$/,'')||'/'; send(`cd "${up.replace(/\"/g,'\\\"')}"\n`); send('ls\n'); loadList(up); }
+  function goUp(){ const up=cwd.replace(/\/+$/,'').replace(/\/[^\/]+$/,'')||'/'; send(1, `cd "${up.replace(/\"/g,'\\\"')}"\n`); send(1, 'ls\n'); loadList(up); }
 
   // Sidebar keyboard navigation
   const listEl = document.getElementById('list');
   listEl.addEventListener('keydown', (e)=>{ if(e.key==='ArrowDown'){ sel=Math.min(sel+1, items.length-1); renderList(); e.preventDefault(); } else if(e.key==='ArrowUp'){ sel=Math.max(sel-1, 0); renderList(); e.preventDefault(); } else if(e.key==='Enter'){ openItem(); e.preventDefault(); } else if(e.key==='Backspace'){ goUp(); e.preventDefault(); } });
   listEl.addEventListener('click', ()=>setFocus('explorer'));
-  termEl.addEventListener('click', ()=>{ focusTarget='terminal'; term.focus(); });
+  document.getElementById('term1').addEventListener('click', ()=>{ focusTarget='terminal1'; t1.t.focus(); });
+  document.getElementById('term2').addEventListener('click', ()=>{ focusTarget='terminal2'; t2.t.focus(); });
 
   // D-pad buttons
-  document.getElementById('dp-up').onclick = ()=>{ if(focusTarget==='explorer'){ sel=Math.max(sel-1, 0); renderList(); } else { send("\x1b[A"); } };
-  document.getElementById('dp-down').onclick = ()=>{ if(focusTarget==='explorer'){ sel=Math.min(sel+1, items.length-1); renderList(); } else { send("\x1b[B"); } };
-  document.getElementById('dp-left').onclick = ()=>{ if(focusTarget==='explorer'){ goUp(); } else { send("\x1b[D"); } };
-  document.getElementById('dp-right').onclick = ()=>{ if(focusTarget==='explorer'){ openItem(); } else { send("\x1b[C"); } };
-
-  // Header back
-  document.getElementById('btn-up').onclick = ()=>{ goUp(); setFocus('explorer'); };
+  function dpsend(code){ if(focusTarget==='terminal2'){ send(2, code); } else if(focusTarget==='terminal1'){ send(1, code); } else { /* explorer */ if(code==='\x1b[A'){ sel=Math.max(sel-1, 0); renderList(); } else if(code==='\x1b[B'){ sel=Math.min(sel+1, items.length-1); renderList(); } else if(code==='\x1b[D'){ goUp(); } else if(code==='\x1b[C'){ openItem(); } } }
+  document.getElementById('dp-up').onclick = ()=> dpsend("\x1b[A");
+  document.getElementById('dp-down').onclick = ()=> dpsend("\x1b[B");
+  document.getElementById('dp-left').onclick = ()=> dpsend("\x1b[D");
+  document.getElementById('dp-right').onclick = ()=> dpsend("\x1b[C");
 
   // Bottom bar actions
-  document.getElementById('act-home').onclick = ()=>{ send(`cd ~\n`); send('ls\n'); if(homePath) loadList(homePath); };
+  document.getElementById('act-home').onclick = ()=>{ send(1, `cd ~\n`); send(1, 'ls\n'); if(homePath) loadList(homePath); };
   document.getElementById('act-up').onclick = ()=> goUp();
-  document.getElementById('act-lsa').onclick = ()=> send('ls -la\n');
-  document.getElementById('btn-tab').onclick = ()=> send('\t');
-  document.getElementById('btn-esc').onclick = ()=> send('\x1b');
+  document.getElementById('act-lsa').onclick = ()=> send(1, 'ls -la\n');
+  document.getElementById('btn-tab').onclick = ()=>{ if(focusTarget==='terminal2') send(2,'\t'); else send(1,'\t'); };
+  document.getElementById('btn-esc').onclick = ()=>{ if(focusTarget==='terminal2') send(2,'\x1b'); else send(1,'\x1b'); };
   document.getElementById('btn-copy').onclick = ()=>{ try{ const sel=window.getSelection().toString(); if(sel){ navigator.clipboard.writeText(sel); } }catch{} };
-  document.getElementById('btn-reset').onclick = async ()=>{ if(!tid) return; await fetch('/api/term/close',{method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({tid})}); tid=null; term.write('\r\n[reset]\r\n'); await newTerm(); };
+  document.getElementById('btn-reset').onclick = async ()=>{ if(tid1){ await fetch('/api/term/close',{method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({tid:tid1})}); tid1=null; localStorage.removeItem('tid1'); } t1.t.write('\r\n[reset]\r\n'); await attachOrNew(); poll(1); loadList(homePath||cwd); };
   document.getElementById('btn-scroll').onclick = ()=>{ scrollLock=!scrollLock; document.getElementById('btn-scroll').textContent = 'ScrollLock: ' + (scrollLock?'On':'Off'); };
-  document.getElementById('clear').onclick = ()=>{ if(tid) fetch('/api/term/clear',{method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({tid})}); };
+  document.getElementById('clear').onclick = ()=>{ if(focusTarget==='terminal2' && tid2) fetch('/api/term/clear',{method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({tid:tid2})}); else if(tid1) fetch('/api/term/clear',{method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({tid:tid1})}); };
+  document.getElementById('btn-up').onclick = ()=>{ goUp(); setFocus('explorer'); };
 
-  term.onData(d => { focusTarget='terminal'; send(d); });
+  // Split & Log mode
+  document.getElementById('btn-split').onclick = async ()=>{ const pane2=document.getElementById('pane2'); split=!split; document.getElementById('btn-split').textContent='Split: '+(split?'On':'Off'); if(split){ pane2.style.display='block'; if(!tid2){ await newTerm(2); poll(2); } } else { pane2.style.display='none'; } };
+  document.getElementById('btn-log').onclick = async ()=>{ logMode=!logMode; document.getElementById('btn-log').textContent='Log: '+(logMode?'On':'Off'); if(logMode){ const p=prompt('Path file utk tail -f:'); if(!p){ logMode=false; document.getElementById('btn-log').textContent='Log: Off'; return; } if(!tid2){ await newTerm(2); poll(2); split=true; document.getElementById('pane2').style.display='block'; document.getElementById('btn-split').textContent='Split: On'; } t2.t.clear(); await send(2, `tail -f "${p.replace(/\"/g,'\\\"')}"\n`); } else { if(tid2){ await send(2, '\x03'); } } };
 
-  await newTerm();
+  // Term input
+  t1.t.onData(d => { focusTarget='terminal1'; send(1,d); });
+  t2.t.onData(d => { focusTarget='terminal2'; send(2,d); });
+
+  await attachOrNew(); poll(1); loadList(homePath||cwd);
 })();
 </script>

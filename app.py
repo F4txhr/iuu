@@ -1,5 +1,5 @@
 from flask import Flask, request, jsonify, send_from_directory
-import os, pty, select, threading, subprocess, signal
+import os, pty, select, threading, subprocess, signal, socket, getpass
 
 app = Flask(__name__, static_url_path='/static')
 
@@ -153,6 +153,17 @@ def list_dir():
         return jsonify({ 'cwd': os.path.abspath(path), 'items': items })
     except Exception as e:
         return jsonify({ 'error': str(e) }), 400
+
+
+@app.route('/api/info')
+def info():
+    try:
+        user = os.environ.get('USER') or getpass.getuser()
+    except Exception:
+        user = 'user'
+    host = socket.gethostname() or 'localhost'
+    shell_path = (detect_shell()[0] if isinstance(detect_shell(), list) else 'sh')
+    return jsonify({ 'user': user, 'host': host, 'shell': os.path.basename(shell_path) })
 
 
 if __name__ == '__main__':
