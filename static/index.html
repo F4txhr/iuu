@@ -42,6 +42,7 @@
   <button id="act-home">~</button>
   <button id="act-up">..</button>
   <button id="act-lsa">ls -la</button>
+  <button id="btn-openhere">Open Here</button>
   <button id="btn-tab">Tab</button>
   <button id="btn-esc">Esc</button>
   <button id="btn-copy">Copy</button>
@@ -64,7 +65,6 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.51.0/min/vs/loader.min.js"></script>
 <script>
 (async function(){
-  // Status info
   try{ const r=await fetch('/api/info'); const j=await r.json(); document.getElementById('st-user').textContent = (j.user||'user')+'@'+(j.host||'host'); document.getElementById('st-shell').textContent = (j.shell||'sh'); }catch{}
   setInterval(()=>{ const d=new Date(); const t=[d.getHours(),d.getMinutes(),d.getSeconds()].map(x=>String(x).padStart(2,'0')).join(':'); document.getElementById('st-time').textContent=t; }, 1000);
 
@@ -90,11 +90,11 @@
 
   async function loadList(path){ try{ const r=await fetch('/api/list?path='+encodeURIComponent(path)+'&tid='+encodeURIComponent(tid1)); const j=await r.json(); if(j.error){ return; } cwd=j.cwd; document.getElementById('path-text').textContent=cwd; items=j.items||[]; sel=0; renderList(); }catch{} }
 
-  function renderList(){ const ul=document.getElementById('list'); ul.innerHTML=''; items.forEach((it,i)=>{ const li=document.createElement('li'); li.className = (i===sel?'sel':''); const span=document.createElement('span'); span.className = it.is_dir?'dir':'file'; span.textContent = (it.is_dir?'📁 ':'📄 ')+it.name; li.appendChild(span); li.onclick=()=>{ sel=i; openItem(); setFocus('explorer'); }; li.ondblclick=()=>{ if(!it.is_dir){ openInEditor(cwd.replace(/\/+$/,'')+'/'+it.name); } }; ul.appendChild(li); }); }
+  function renderList(){ const ul=document.getElementById('list'); ul.innerHTML=''; items.forEach((it,i)=>{ const li=document.createElement('li'); li.className = (i===sel?'sel':''); const span=document.createElement('span'); span.className = it.is_dir?'dir':'file'; span.textContent = (it.is_dir?'📁 ':'📄 ')+it.name; li.appendChild(span); li.onclick=()=>{ sel=i; if(it.is_dir){ loadList(cwd.replace(/\/+$/,'')+'/'+it.name); } else { openInEditor(cwd.replace(/\/+$/,'')+'/'+it.name); } setFocus('explorer'); }; li.ondblclick=()=>{ if(!it.is_dir){ openInEditor(cwd.replace(/\/+$/,'')+'/'+it.name); } }; ul.appendChild(li); }); }
 
-  async function openItem(){ const it=items[sel]; if(!it) return; const path=cwd.replace(/\/+$/,'')+'/'+it.name; if(it.is_dir){ await send(1, `cd "${path.replace(/\"/g,'\\\"')}"\n`); await send(1, `ls\n`); loadList(path); } else { await send(1, `xdg-open "${path.replace(/\"/g,'\\\"')}"\n`); } }
+  async function openItem(){ const it=items[sel]; if(!it) return; const path=cwd.replace(/\/+$/,'')+'/'+it.name; if(it.is_dir){ loadList(path); } else { openInEditor(path); } }
 
-  function goUp(){ const up=cwd.replace(/\/+$/,'').replace(/\/[^\/]+$/,'')||'/'; send(1, `cd "${up.replace(/\"/g,'\\\"')}"\n`); send(1, 'ls\n'); loadList(up); }
+  function goUp(){ const up=cwd.replace(/\/+$/,'').replace(/\/[^\/]+$/,'')||'/'; loadList(up); }
 
   // Sidebar keyboard navigation
   const listEl = document.getElementById('list');
@@ -112,9 +112,10 @@
 
   // Bottom bar actions
   document.getElementById('btn-explorer').onclick = ()=>{ explorerVisible=!explorerVisible; document.getElementById('btn-explorer').textContent='Explorer: '+(explorerVisible?'On':'Off'); document.getElementById('sidebar').style.display = explorerVisible?'block':'none'; setTimeout(()=>{ try{ t1.fit && t1.fit.fit(); t2.fit && t2.fit.fit(); }catch{} }, 50); };
-  document.getElementById('act-home').onclick = ()=>{ send(1, `cd ~\n`); send(1, 'ls\n'); if(homePath) loadList(homePath); };
-  document.getElementById('act-up').onclick = ()=> goUp();
+  document.getElementById('act-home').onclick = ()=> send(1, `cd ~\nls\n`);
+  document.getElementById('act-up').onclick = ()=> send(1, `cd ..\nls\n`);
   document.getElementById('act-lsa').onclick = ()=> send(1, 'ls -la\n');
+  document.getElementById('btn-openhere').onclick = ()=>{ if(cwd){ send(1, `cd "${cwd.replace(/\"/g,'\\\"')}"\nls\n`); } };
   document.getElementById('btn-tab').onclick = ()=>{ if(focusTarget==='terminal2') send(2,'\t'); else send(1,'\t'); };
   document.getElementById('btn-esc').onclick = ()=>{ if(focusTarget==='terminal2') send(2,'\x1b'); else send(1,'\x1b'); };
   document.getElementById('btn-copy').onclick = ()=>{ try{ const sel=window.getSelection().toString(); if(sel){ navigator.clipboard.writeText(sel); } }catch{} };
