@@ -5,7 +5,7 @@
 <link rel="stylesheet" href="./static/xterm.css">
 <style>
   html, body { height:100%; margin:0; background:#111; color:#eee; font-family:ui-monospace, monospace; }
-  #layout { display:flex; height:100vh; }
+  #layout { display:flex; height:100vh; flex-direction:row; }
   #sidebar { width: 260px; border-right:1px solid #333; overflow:auto; background:#0f0f0f; }
   #main { position:relative; flex:1; display:flex; flex-direction:column; }
   #editorWrap { display:none; position:relative; height:50%; border-bottom:1px solid #333; }
@@ -37,13 +37,20 @@
     #layout { flex-direction:column; }
     #sidebar { width:100%; height:40%; border-right:none; border-bottom:1px solid #333; }
     #main { height:60%; }
-    #bottombar { height:64px; padding:12px 8px; }
-    #bottombar button { padding:8px 12px; min-height:44px; font-size:14px; }
-    #tab-prev, #tab-next { min-width:48px; }
-    #list li { padding:16px 12px; font-size:16px; }
-    #path { padding:12px; }
-    .termPane .term { padding:8px; }
-    #termWrap { padding:8px; gap:8px; }
+  }
+  
+  /* Desktop - ensure sidebar is visible */
+  @media (min-width: 769px) {
+    #layout { flex-direction:row; }
+    #sidebar { width:260px; height:100vh; border-right:1px solid #333; border-bottom:none; }
+    #main { flex:1; height:100vh; }
+    #bottombar { height:56px; padding:8px; }
+    #bottombar button { padding:6px 10px; font-size:14px; }
+    #tab-prev, #tab-next { min-width:44px; }
+    #list li { padding:12px 10px; font-size:14px; }
+    #path { padding:8px; }
+    .termPane .term { padding:6px; }
+    #termWrap { padding:4px; gap:4px; }
   }
   
   @media (max-width: 480px) {
@@ -287,7 +294,7 @@
   (function(){ const bar=document.getElementById('bottombar'); let sx=0, sy=0; bar.addEventListener('touchstart',e=>{ if(e.touches.length){ sx=e.touches[0].clientX; sy=e.touches[0].clientY; } },{passive:true}); bar.addEventListener('touchend',e=>{ const dx=(e.changedTouches[0].clientX - sx); const dy=(e.changedTouches[0].clientY - sy); if(Math.abs(dx)>50 && Math.abs(dx)>Math.abs(dy)){ if(dx<0) document.getElementById('tab-next').click(); else document.getElementById('tab-prev').click(); } }); })();
 
   function bindTabButtons(){
-    const ex=document.getElementById('btn-explorer'); if(ex) ex.onclick=()=>{ explorerVisible=!explorerVisible; ex.textContent='Explorer: '+(explorerVisible?'On':'Off'); document.getElementById('sidebar').style.display = explorerVisible?'block':'none'; setTimeout(()=>{ try{ t1.fit && t1.fit.fit(); t2.fit && t2.fit.fit(); }catch{} }, 50); };
+    const ex=document.getElementById('btn-explorer'); if(ex) ex.onclick=()=>{ explorerVisible=!explorerVisible; ex.textContent='Explorer: '+(explorerVisible?'On':'Off'); const sidebar = document.getElementById('sidebar'); if(explorerVisible) { sidebar.style.display = 'block'; sidebar.style.width = '260px'; } else { sidebar.style.display = 'none'; } setTimeout(()=>{ try{ t1.fit && t1.fit.fit(); t2.fit && t2.fit.fit(); }catch{} }, 50); };
     const home=document.getElementById('act-home'); if(home) home.onclick=()=> send(1, `cd ~\nls\n`);
     const up=document.getElementById('act-up'); if(up) up.onclick=()=> send(1, `cd ..\nls\n`);
     const lsa=document.getElementById('act-lsa'); if(lsa) lsa.onclick=()=> send(1, 'ls -la\n');
@@ -1159,6 +1166,15 @@ Enter 1, 2, or 3:`);
   });
 
   // Navigation controls (duplicate code removed)
+
+  // Ensure explorer is visible on desktop
+  if (window.innerWidth > 768) {
+    explorerVisible = true;
+    const sidebar = document.getElementById('sidebar');
+    sidebar.style.display = 'block';
+    const exBtn = document.getElementById('btn-explorer');
+    if (exBtn) exBtn.textContent = 'Explorer: On';
+  }
 
   await attachOrNew(); poll(1); loadList(homePath||cwd); renderTab();
 })();
