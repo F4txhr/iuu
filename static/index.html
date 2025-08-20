@@ -155,13 +155,7 @@
   t1.t.onData(d => { focusTarget='terminal1'; send(1,d); });
   t2.t.onData(d => { focusTarget='terminal2'; send(2,d); });
 
-  // Tabs render and navigation
-  const tabs=[{name:'Nav', buttons:['btn-explorer','act-home','act-up','act-lsa','btn-openhere']},{name:'Term', buttons:['btn-tab','btn-esc','btn-copy','btn-reset','btn-scroll']},{name:'View', buttons:['btn-split','btn-log']},{name:'Edit', buttons:['btn-editor','btn-save']}];
-  let tabIdx = parseInt(localStorage.getItem('tabIdx')||'0',10); if(isNaN(tabIdx)) tabIdx=0;
-  function renderTab(){ const cont=document.getElementById('tab-content'); cont.innerHTML=''; const tab=tabs[tabIdx]; document.getElementById('tab-label').textContent=tab.name; const labels={ 'btn-explorer':'Explorer: On','act-home':'~','act-up':'..','act-lsa':'ls -la','btn-openhere':'Open Here','btn-tab':'Tab','btn-esc':'Esc','btn-copy':'Copy','btn-reset':'Reset','btn-scroll':'ScrollLock: Off','btn-split':'Split: Off','btn-log':'Log: Off','btn-editor':'Editor: Off','btn-save':'Save' }; tab.buttons.forEach(id=>{ const b=document.createElement('button'); b.id=id; b.textContent=labels[id]||id; cont.appendChild(b); }); bindTabButtons(); localStorage.setItem('tabIdx', tabIdx); }
-  document.getElementById('tab-prev').onclick=()=>{ tabIdx=(tabIdx-1+tabs.length)%tabs.length; renderTab(); };
-  document.getElementById('tab-next').onclick=()=>{ tabIdx=(tabIdx+1)%tabs.length; renderTab(); };
-  (function(){ const bar=document.getElementById('bottombar'); let sx=0, sy=0; bar.addEventListener('touchstart',e=>{ if(e.touches.length){ sx=e.touches[0].clientX; sy=e.touches[0].clientY; } },{passive:true}); bar.addEventListener('touchend',e=>{ const dx=(e.changedTouches[0].clientX - sx); const dy=(e.changedTouches[0].clientY - sy); if(Math.abs(dx)>50 && Math.abs(dx)>Math.abs(dy)){ if(dx<0) document.getElementById('tab-next').click(); else document.getElementById('tab-prev').click(); } }); })();
+  // Navigation controls (duplicate code removed)
 
   await attachOrNew(); poll(1); loadList(homePath||cwd); renderTab();
 })();
