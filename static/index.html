@@ -77,7 +77,21 @@
   async function poll(which){ const tid=(which===2?tid2:tid1); const tx=(which===2?t2:t1); if(!tid) return; try{ const r=await fetch('/api/term/poll?tid='+encodeURIComponent(tid)); const j=await r.json(); if(j.data){ tx.t.write(j.data); if(!scrollLock){ tx.t.scrollToBottom(); } } }catch{} setTimeout(()=>poll(which),80); }
   async function send(which, data){ const tid=(which===2?tid2:tid1); if(!tid) return; try{ spin(true); await fetch('/api/term/input',{ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ tid, data }) }); }catch(e){ (which===2?t2:t1).t.writeln(`\r\n[ERR] send failed`); } finally{ spin(false); } }
 
-  async function loadList(path){ try{ const r=await fetch('/api/list?path='+encodeURIComponent(path)+'&tid='+encodeURIComponent(tid1)); const j=await r.json(); if(j.error){ return; } cwd=j.cwd; document.getElementById('path-text').textContent=cwd; items=j.items||[]; sel=0; renderList(); }catch{} }
+  // Sync terminal working directory with explorer
+  async function syncTerminalToPath(path) {
+    if (tid1 && path) {
+      try {
+        await send(1, `cd "${path.replace(/"/g, '\\"')}"\n`);
+      } catch(e) {
+        console.log('Failed to sync terminal directory:', e);
+      }
+    }
+  }
+
+  async function loadList(path){ try{ const r=await fetch('/api/list?path='+encodeURIComponent(path)+'&tid='+encodeURIComponent(tid1)); const j=await r.json(); if(j.error){ return; } cwd=j.cwd; document.getElementById('path-text').textContent=cwd; items=j.items||[]; sel=0; renderList(); 
+    // Sync terminal to the new directory
+    await syncTerminalToPath(cwd);
+  }catch{} }
   function renderList(){ const ul=document.getElementById('list'); ul.innerHTML=''; items.forEach((it,i)=>{ const li=document.createElement('li'); li.className = (i===sel?'sel':''); const span=document.createElement('span'); span.className = it.is_dir?'dir':'file'; span.textContent = (it.is_dir?'📁 ':'📄 ')+it.name; li.appendChild(span); li.onclick=()=>{ sel=i; if(it.is_dir){ loadList(cwd.replace(/\/+$/,'')+'/'+it.name); } else { openInEditor(cwd.replace(/\/+$/,'')+'/'+it.name); } setFocus('explorer'); }; li.ondblclick=()=>{ if(!it.is_dir){ openInEditor(cwd.replace(/\/+$/,'')+'/'+it.name); } }; ul.appendChild(li); }); }
   async function openItem(){ const it=items[sel]; if(!it) return; const path=cwd.replace(/\/+$/,'')+'/'+it.name; if(it.is_dir){ loadList(path); } else { openInEditor(path); } }
   function goUp(){ const up=cwd.replace(/\/+$/,'').replace(/\/[^\/]+$/,'')||'/'; loadList(up); }
