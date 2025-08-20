@@ -5,27 +5,119 @@
 <link rel="stylesheet" href="./static/xterm.css">
 <style>
   html, body { height:100%; margin:0; background:#111; color:#eee; font-family:ui-monospace, monospace; }
-  #layout { display:flex; height:100vh; }
+  #layout { display:flex; height:100vh; flex-direction:row; }
   #sidebar { width: 260px; border-right:1px solid #333; overflow:auto; background:#0f0f0f; }
   #main { position:relative; flex:1; display:flex; flex-direction:column; }
   #editorWrap { display:none; position:relative; height:50%; border-bottom:1px solid #333; }
-  #editor { position:absolute; left:0; top:0; right:0; bottom:0; }
+  #editorTabs { height:32px; background:#1e1e1e; border-bottom:1px solid #333; display:flex; overflow-x:auto; }
+  .editor-tab { background:#2d2d30; color:#ccc; border:none; padding:6px 12px; border-right:1px solid #333; cursor:pointer; white-space:nowrap; position:relative; }
+  .editor-tab.active { background:#007acc; color:#fff; }
+  .editor-tab .close-btn { margin-left:8px; color:#999; font-weight:bold; }
+  .editor-tab .close-btn:hover { color:#fff; }
+  #editor { position:absolute; left:0; top:32px; right:0; bottom:0; }
   #termWrap { position:relative; flex:1; display:flex; gap:4px; padding:4px; }
   .termPane { flex:1; position:relative; border:1px solid #333; border-radius:6px; overflow:hidden; }
   .termPane .term { position:absolute; left:0; top:0; right:0; bottom:0; padding:6px; }
   #bottombar { position:fixed; left:0; right:0; bottom:24px; height:56px; background:#1c1f26; border-top:1px solid #333; display:flex; align-items:center; gap:8px; padding:8px; z-index:15; }
-  #bottombar button { background:#2a2f3a; color:#fff; border:none; padding:6px 10px; border-radius:6px; cursor:pointer; }
+  #bottombar button { background:#2a2f3a; color:#fff; border:none; padding:6px 10px; border-radius:6px; cursor:pointer; touch-action:manipulation; }
   #tab-prev, #tab-next { min-width:44px; }
   #tab-label { min-width:60px; text-align:center; color:#9aa; }
   #tab-content { display:flex; gap:8px; overflow:hidden; white-space:nowrap; }
   #statusbar { position:fixed; left:0; right:0; bottom:0; height:24px; background:#0d1014; border-top:1px solid #333; display:flex; align-items:center; gap:12px; padding:0 8px; font-size:12px; color:#9aa; z-index:16; }
   #path { display:flex; align-items:center; gap:8px; padding:8px; border-bottom:1px solid #333; color:#9cf; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-  #path .back { background:#2a2f3a; color:#fff; border:none; padding:2px 8px; border-radius:4px; cursor:pointer; }
+  #path .back { background:#2a2f3a; color:#fff; border:none; padding:2px 8px; border-radius:4px; cursor:pointer; touch-action:manipulation; }
   #list { list-style:none; margin:0; padding:0; outline:none; }
-  #list li { padding:6px 10px; cursor:pointer; }
+  #list li { padding:12px 10px; cursor:pointer; border-bottom:1px solid #222; touch-action:manipulation; }
   #list li.sel { background:#1f2630; }
   #list li .dir { color:#7ad; }
   #list li .file { color:#eee; }
+  
+  /* Mobile Responsive */
+  @media (max-width: 768px) {
+    #layout { flex-direction:column; }
+    #sidebar { width:100%; height:40%; border-right:none; border-bottom:1px solid #333; }
+    #main { height:60%; }
+  }
+  
+  /* Desktop - ensure sidebar is visible */
+  @media (min-width: 769px) {
+    #layout { flex-direction:row; }
+    #sidebar { width:260px; height:100vh; border-right:1px solid #333; border-bottom:none; }
+    #main { flex:1; height:100vh; }
+    #bottombar { height:56px; padding:8px; }
+    #bottombar button { padding:6px 10px; font-size:14px; }
+    #tab-prev, #tab-next { min-width:44px; }
+    #list li { padding:12px 10px; font-size:14px; }
+    #path { padding:8px; }
+    .termPane .term { padding:6px; }
+    #termWrap { padding:4px; gap:4px; }
+  }
+  
+  @media (max-width: 480px) {
+    #sidebar { height:35%; }
+    #main { height:65%; }
+    #bottombar { gap:4px; padding:8px 4px; }
+    #bottombar button { padding:6px 8px; font-size:12px; }
+    #tab-content { gap:4px; }
+    #statusbar { font-size:11px; gap:8px; }
+    #list li { padding:14px 8px; }
+  }
+  
+  /* Touch improvements */
+  .termPane .term { -webkit-overflow-scrolling: touch; }
+  #list { -webkit-overflow-scrolling: touch; }
+  #sidebar { -webkit-overflow-scrolling: touch; }
+  
+  /* Prevent zoom on input focus */
+  input, button, select, textarea { font-size: 16px; }
+  
+  /* Context menu */
+  .context-menu { position:fixed; background:#2a2f3a; border:1px solid #555; border-radius:6px; padding:4px 0; z-index:1000; box-shadow:0 4px 12px rgba(0,0,0,0.5); }
+  .context-menu-item { padding:8px 16px; cursor:pointer; color:#eee; font-size:14px; }
+  .context-menu-item:hover { background:#3a3f4a; }
+  .context-menu-separator { height:1px; background:#555; margin:4px 0; }
+  
+  /* System Monitor */
+  #systemMonitor { position:fixed; top:10px; right:10px; width:280px; background:#1e1e1e; border:1px solid #333; border-radius:8px; padding:12px; z-index:20; display:none; font-size:12px; }
+  #systemMonitor h3 { margin:0 0 12px 0; color:#9cf; font-size:14px; }
+  .stat-row { display:flex; justify-content:space-between; margin:8px 0; }
+  .stat-label { color:#ccc; }
+  .stat-value { color:#9cf; font-weight:bold; }
+  .progress-bar { width:100%; height:6px; background:#333; border-radius:3px; margin:4px 0; overflow:hidden; }
+  .progress-fill { height:100%; background:linear-gradient(90deg, #4CAF50, #FFC107, #F44336); transition:width 0.3s; }
+  .progress-fill.cpu { background:#2196F3; }
+  .progress-fill.memory { background:#FF9800; }
+  .progress-fill.disk { background:#9C27B0; }
+  #systemMonitor .close-btn { position:absolute; top:8px; right:12px; cursor:pointer; color:#999; font-weight:bold; }
+  #systemMonitor .close-btn:hover { color:#fff; }
+  
+  /* Plugin Manager */
+  #pluginManager { position:fixed; top:10px; left:10px; width:320px; background:#1e1e1e; border:1px solid #333; border-radius:8px; padding:12px; z-index:20; display:none; font-size:12px; max-height:400px; overflow-y:auto; }
+  #pluginManager h3 { margin:0 0 12px 0; color:#9cf; font-size:14px; }
+  #pluginManager .close-btn { position:absolute; top:8px; right:12px; cursor:pointer; color:#999; font-weight:bold; }
+  #pluginManager .close-btn:hover { color:#fff; }
+  .plugin-item { background:#2a2a2a; border:1px solid #444; border-radius:4px; padding:8px; margin:8px 0; }
+  .plugin-name { color:#9cf; font-weight:bold; }
+  .plugin-desc { color:#ccc; font-size:11px; margin:4px 0; }
+  .plugin-command { color:#888; font-family:monospace; font-size:10px; }
+  .plugin-actions { margin-top:8px; }
+  .plugin-actions button { background:#333; color:#fff; border:none; padding:4px 8px; border-radius:3px; margin-right:4px; cursor:pointer; font-size:10px; }
+  .plugin-actions button:hover { background:#555; }
+  .plugin-actions .delete { background:#d32f2f; }
+  .plugin-form { background:#2a2a2a; border:1px solid #444; border-radius:4px; padding:12px; margin:12px 0; }
+  .plugin-form input, .plugin-form textarea { width:100%; background:#333; color:#fff; border:1px solid #555; border-radius:3px; padding:6px; margin:4px 0; font-size:12px; }
+  .plugin-form button { background:#007acc; color:#fff; border:none; padding:6px 12px; border-radius:3px; cursor:pointer; }
+  
+  /* File Share Panel */
+  #sharePanel { position:fixed; bottom:100px; right:10px; width:300px; background:#1e1e1e; border:1px solid #333; border-radius:8px; padding:12px; z-index:20; display:none; font-size:12px; max-height:300px; overflow-y:auto; }
+  #sharePanel h3 { margin:0 0 12px 0; color:#9cf; font-size:14px; }
+  #sharePanel .close-btn { position:absolute; top:8px; right:12px; cursor:pointer; color:#999; font-weight:bold; }
+  #sharePanel .close-btn:hover { color:#fff; }
+  .share-item { background:#2a2a2a; border:1px solid #444; border-radius:4px; padding:8px; margin:8px 0; }
+  .share-filename { color:#9cf; font-weight:bold; }
+  .share-url { color:#888; font-family:monospace; font-size:10px; word-break:break-all; }
+  .share-actions { margin-top:4px; }
+  .share-actions button { background:#333; color:#fff; border:none; padding:2px 6px; border-radius:3px; margin-right:4px; cursor:pointer; font-size:10px; }
 </style>
 <div id="layout">
   <div id="sidebar">
@@ -33,7 +125,10 @@
     <ul id="list" tabindex="0"></ul>
   </div>
   <div id="main">
-    <div id="editorWrap"><div id="editor"></div></div>
+    <div id="editorWrap">
+      <div id="editorTabs"></div>
+      <div id="editor"></div>
+    </div>
     <div id="termWrap">
       <div class="termPane"><div id="term1" class="term"></div></div>
       <div class="termPane" id="pane2" style="display:none"><div id="term2" class="term"></div></div>
@@ -53,9 +148,66 @@
   <button id="tab-next">▶</button>
 </div>
 <div id="statusbar"><span id="st-user">user@host</span><span id="st-shell">sh</span><span id="st-time">00:00:00</span><span id="st-spin" style="display:none">⏳</span><span id="st-file" style="margin-left:auto; color:#9cf;"></span></div>
+<div id="systemMonitor">
+  <span class="close-btn" onclick="toggleSystemMonitor()">×</span>
+  <h3>📊 System Monitor</h3>
+  <div class="stat-row">
+    <span class="stat-label">CPU:</span>
+    <span class="stat-value" id="cpu-percent">0%</span>
+  </div>
+  <div class="progress-bar">
+    <div class="progress-fill cpu" id="cpu-bar" style="width: 0%"></div>
+  </div>
+  
+  <div class="stat-row">
+    <span class="stat-label">Memory:</span>
+    <span class="stat-value" id="memory-usage">0 GB / 0 GB</span>
+  </div>
+  <div class="progress-bar">
+    <div class="progress-fill memory" id="memory-bar" style="width: 0%"></div>
+  </div>
+  
+  <div class="stat-row">
+    <span class="stat-label">Disk:</span>
+    <span class="stat-value" id="disk-usage">0 GB / 0 GB</span>
+  </div>
+  <div class="progress-bar">
+    <div class="progress-fill disk" id="disk-bar" style="width: 0%"></div>
+  </div>
+  
+  <div class="stat-row">
+    <span class="stat-label">Processes:</span>
+    <span class="stat-value" id="process-count">0</span>
+  </div>
+  
+  <div class="stat-row">
+    <span class="stat-label">Uptime:</span>
+    <span class="stat-value" id="uptime">0h</span>
+  </div>
+</div>
+<div id="pluginManager">
+  <span class="close-btn" onclick="togglePluginManager()">×</span>
+  <h3>🔌 Plugin Manager</h3>
+  
+  <div class="plugin-form">
+    <input type="text" id="plugin-name" placeholder="Plugin Name (e.g., 'weather')">
+    <textarea id="plugin-command" placeholder="Command (use $ARGS for arguments)&#10;e.g., curl wttr.in/$ARGS"></textarea>
+    <input type="text" id="plugin-desc" placeholder="Description (optional)">
+    <button onclick="addPlugin()">Add Plugin</button>
+  </div>
+  
+  <div id="plugin-list"></div>
+</div>
+
+<div id="sharePanel">
+  <span class="close-btn" onclick="toggleSharePanel()">×</span>
+  <h3>🌐 Shared Files</h3>
+  <div id="share-list">No shared files</div>
+</div>
 <script src="./static/xterm.min.js"></script>
 <script src="./static/xterm-addon-fit.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.51.0/min/vs/loader.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 <script>
 (async function(){
   // Status info
@@ -67,7 +219,7 @@
   const t1 = mkTerm(document.getElementById('term1'));
   const t2 = mkTerm(document.getElementById('term2'));
 
-  let tid1=null, tid2=null, cwd=null, items=[], sel=0, focusTarget='explorer', scrollLock=false, homePath=null, split=false, logMode=false, explorerVisible=true;
+  let tid1=null, tid2=null, cwd=null, items=[], sel=0, focusTarget='explorer', scrollLock=false, homePath=null, split=false, logMode=false, explorerVisible=true, commandHistory=[], historyIndex=-1, currentCommand='';
 
   function setFocus(target){ focusTarget = target; if(target==='explorer' && explorerVisible){ document.getElementById('list').focus(); } }
   function spin(on){ document.getElementById('st-spin').style.display = on?'inline':'none'; }
@@ -77,7 +229,21 @@
   async function poll(which){ const tid=(which===2?tid2:tid1); const tx=(which===2?t2:t1); if(!tid) return; try{ const r=await fetch('/api/term/poll?tid='+encodeURIComponent(tid)); const j=await r.json(); if(j.data){ tx.t.write(j.data); if(!scrollLock){ tx.t.scrollToBottom(); } } }catch{} setTimeout(()=>poll(which),80); }
   async function send(which, data){ const tid=(which===2?tid2:tid1); if(!tid) return; try{ spin(true); await fetch('/api/term/input',{ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ tid, data }) }); }catch(e){ (which===2?t2:t1).t.writeln(`\r\n[ERR] send failed`); } finally{ spin(false); } }
 
-  async function loadList(path){ try{ const r=await fetch('/api/list?path='+encodeURIComponent(path)+'&tid='+encodeURIComponent(tid1)); const j=await r.json(); if(j.error){ return; } cwd=j.cwd; document.getElementById('path-text').textContent=cwd; items=j.items||[]; sel=0; renderList(); }catch{} }
+  // Sync terminal working directory with explorer
+  async function syncTerminalToPath(path) {
+    if (tid1 && path) {
+      try {
+        await send(1, `cd "${path.replace(/"/g, '\\"')}"\n`);
+      } catch(e) {
+        console.log('Failed to sync terminal directory:', e);
+      }
+    }
+  }
+
+  async function loadList(path){ try{ const r=await fetch('/api/list?path='+encodeURIComponent(path)+'&tid='+encodeURIComponent(tid1)); const j=await r.json(); if(j.error){ return; } cwd=j.cwd; document.getElementById('path-text').textContent=cwd; items=j.items||[]; sel=0; renderList(); 
+    // Sync terminal to the new directory
+    await syncTerminalToPath(cwd);
+  }catch{} }
   function renderList(){ const ul=document.getElementById('list'); ul.innerHTML=''; items.forEach((it,i)=>{ const li=document.createElement('li'); li.className = (i===sel?'sel':''); const span=document.createElement('span'); span.className = it.is_dir?'dir':'file'; span.textContent = (it.is_dir?'📁 ':'📄 ')+it.name; li.appendChild(span); li.onclick=()=>{ sel=i; if(it.is_dir){ loadList(cwd.replace(/\/+$/,'')+'/'+it.name); } else { openInEditor(cwd.replace(/\/+$/,'')+'/'+it.name); } setFocus('explorer'); }; li.ondblclick=()=>{ if(!it.is_dir){ openInEditor(cwd.replace(/\/+$/,'')+'/'+it.name); } }; ul.appendChild(li); }); }
   async function openItem(){ const it=items[sel]; if(!it) return; const path=cwd.replace(/\/+$/,'')+'/'+it.name; if(it.is_dir){ loadList(path); } else { openInEditor(path); } }
   function goUp(){ const up=cwd.replace(/\/+$/,'').replace(/\/[^\/]+$/,'')||'/'; loadList(up); }
@@ -111,10 +277,14 @@
       {id:'btn-scroll', label:'ScrollLock: Off'}
     ]},{name:'View', buttons:[
       {id:'btn-split', label:'Split: Off'},
-      {id:'btn-log', label:'Log: Off'}
+      {id:'btn-log', label:'Log: Off'},
+      {id:'btn-monitor', label:'Monitor: Off'},
+      {id:'btn-plugins', label:'Plugins'},
+      {id:'btn-share', label:'Share Files'}
     ]},{name:'Edit', buttons:[
       {id:'btn-editor', label:'Editor: Off'},
-      {id:'btn-save', label:'Save'}
+      {id:'btn-save', label:'Save'},
+      {id:'btn-screenshot', label:'📸 Screenshot'}
     ]}];
   let tabIdx = parseInt(localStorage.getItem('tabIdx')||'0',10); if(isNaN(tabIdx)) tabIdx=0;
   function renderTab(){ const cont=document.getElementById('tab-content'); cont.innerHTML=''; const tab=tabs[tabIdx]; document.getElementById('tab-label').textContent = tab.name; tab.buttons.forEach(b=>{ const btn=document.createElement('button'); btn.id=b.id; btn.textContent=b.label; cont.appendChild(btn); }); bindTabButtons(); localStorage.setItem('tabIdx', tabIdx); }
@@ -124,7 +294,7 @@
   (function(){ const bar=document.getElementById('bottombar'); let sx=0, sy=0; bar.addEventListener('touchstart',e=>{ if(e.touches.length){ sx=e.touches[0].clientX; sy=e.touches[0].clientY; } },{passive:true}); bar.addEventListener('touchend',e=>{ const dx=(e.changedTouches[0].clientX - sx); const dy=(e.changedTouches[0].clientY - sy); if(Math.abs(dx)>50 && Math.abs(dx)>Math.abs(dy)){ if(dx<0) document.getElementById('tab-next').click(); else document.getElementById('tab-prev').click(); } }); })();
 
   function bindTabButtons(){
-    const ex=document.getElementById('btn-explorer'); if(ex) ex.onclick=()=>{ explorerVisible=!explorerVisible; ex.textContent='Explorer: '+(explorerVisible?'On':'Off'); document.getElementById('sidebar').style.display = explorerVisible?'block':'none'; setTimeout(()=>{ try{ t1.fit && t1.fit.fit(); t2.fit && t2.fit.fit(); }catch{} }, 50); };
+    const ex=document.getElementById('btn-explorer'); if(ex) ex.onclick=()=>{ explorerVisible=!explorerVisible; ex.textContent='Explorer: '+(explorerVisible?'On':'Off'); const sidebar = document.getElementById('sidebar'); if(explorerVisible) { sidebar.style.display = 'block'; sidebar.style.width = '260px'; } else { sidebar.style.display = 'none'; } setTimeout(()=>{ try{ t1.fit && t1.fit.fit(); t2.fit && t2.fit.fit(); }catch{} }, 50); };
     const home=document.getElementById('act-home'); if(home) home.onclick=()=> send(1, `cd ~\nls\n`);
     const up=document.getElementById('act-up'); if(up) up.onclick=()=> send(1, `cd ..\nls\n`);
     const lsa=document.getElementById('act-lsa'); if(lsa) lsa.onclick=()=> send(1, 'ls -la\n');
@@ -136,8 +306,12 @@
     const scr=document.getElementById('btn-scroll'); if(scr) scr.onclick=()=>{ scrollLock=!scrollLock; scr.textContent = 'ScrollLock: ' + (scrollLock?'On':'Off'); };
     const splitBtn=document.getElementById('btn-split'); if(splitBtn) splitBtn.onclick=async ()=>{ const pane2=document.getElementById('pane2'); split=!split; splitBtn.textContent='Split: '+(split?'On':'Off'); if(split){ pane2.style.display='block'; if(!tid2){ await newTerm(2); poll(2); } } else { pane2.style.display='none'; } };
     const logBtn=document.getElementById('btn-log'); if(logBtn) logBtn.onclick=async ()=>{ logMode=!logMode; logBtn.textContent='Log: '+(logMode?'On':'Off'); if(logMode){ const p=prompt('Path file utk tail -f:'); if(!p){ logMode=false; logBtn.textContent='Log: Off'; return; } if(!tid2){ await newTerm(2); poll(2); split=true; document.getElementById('pane2').style.display='block'; if(splitBtn) splitBtn.textContent='Split: On'; } t2.t.clear(); await send(2, `tail -f "${p.replace(/\"/g,'\\\"')}"\n`); } else { if(tid2){ await send(2, '\x03'); } } };
+    const monitorBtn=document.getElementById('btn-monitor'); if(monitorBtn) monitorBtn.onclick=()=>{ toggleSystemMonitor(); monitorBtn.textContent='Monitor: '+(systemMonitorVisible?'On':'Off'); };
+    const pluginsBtn=document.getElementById('btn-plugins'); if(pluginsBtn) pluginsBtn.onclick=()=>{ togglePluginManager(); };
+    const shareBtn=document.getElementById('btn-share'); if(shareBtn) shareBtn.onclick=()=>{ toggleSharePanel(); loadSharedFiles(); };
     const edBtn=document.getElementById('btn-editor'); if(edBtn) edBtn.onclick=()=>{ const on = document.getElementById('editorWrap').style.display!=='block'; showEditor(on); };
     const saveBtn=document.getElementById('btn-save'); if(saveBtn) saveBtn.onclick=async ()=>{ if(!currentFile||!editor) return; const data=editor.getValue(); const r=await fetch('/api/save-file',{ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ path:currentFile, data }) }); const j=await r.json(); if(!j.ok){ alert(j.error||'Gagal simpan'); } };
+    const screenshotBtn=document.getElementById('btn-screenshot'); if(screenshotBtn) screenshotBtn.onclick=()=>{ takeScreenshot(); };
   }
 
   // back button
@@ -145,23 +319,883 @@
   // clear
   document.getElementById('clear').onclick = ()=>{ if(focusTarget==='terminal2' && tid2) fetch('/api/term/clear',{method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({tid:tid2})}); else if(tid1) fetch('/api/term/clear',{method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({tid:tid1})}); };
 
-  // Editor (Monaco)
-  let editor=null, monacoLoaded=false, currentFile=null;
+  // Editor (Monaco) - Multiple file tabs support
+  let editor=null, monacoLoaded=false, currentFile=null, autoSaveTimer=null, hasUnsavedChanges=false, openFiles=[], activeFileIndex=-1;
   function showEditor(on){ document.getElementById('editorWrap').style.display = on?'block':'none'; const edBtn=document.getElementById('btn-editor'); if(edBtn) edBtn.textContent = 'Editor: ' + (on?'On':'Off'); const saveBtn=document.getElementById('btn-save'); if(saveBtn) saveBtn.style.display = on?'inline-block':'none'; }
+  
+  // Multiple file tabs management
+  function renderTabs() {
+    const tabsContainer = document.getElementById('editorTabs');
+    tabsContainer.innerHTML = '';
+    
+    openFiles.forEach((file, index) => {
+      const tab = document.createElement('button');
+      tab.className = 'editor-tab' + (index === activeFileIndex ? ' active' : '');
+      
+      const filename = file.path.split('/').pop();
+      const nameSpan = document.createElement('span');
+      nameSpan.textContent = filename + (file.hasUnsavedChanges ? ' •' : '');
+      
+      const closeBtn = document.createElement('span');
+      closeBtn.className = 'close-btn';
+      closeBtn.textContent = '×';
+      closeBtn.onclick = (e) => {
+        e.stopPropagation();
+        closeFile(index);
+      };
+      
+      tab.appendChild(nameSpan);
+      tab.appendChild(closeBtn);
+      tab.onclick = () => switchToFile(index);
+      
+      tabsContainer.appendChild(tab);
+    });
+  }
+  
+  function findFileIndex(path) {
+    return openFiles.findIndex(f => f.path === path);
+  }
+  
+  function switchToFile(index) {
+    if (index < 0 || index >= openFiles.length) return;
+    
+    // Save current file state
+    if (activeFileIndex >= 0 && editor) {
+      openFiles[activeFileIndex].content = editor.getValue();
+      openFiles[activeFileIndex].hasUnsavedChanges = hasUnsavedChanges;
+    }
+    
+    activeFileIndex = index;
+    const file = openFiles[index];
+    currentFile = file.path;
+    hasUnsavedChanges = file.hasUnsavedChanges;
+    
+    if (editor) {
+      editor.setValue(file.content);
+      monaco.editor.setModelLanguage(editor.getModel(), getLanguageFromPath(file.path));
+    }
+    
+    document.getElementById('st-file').textContent = currentFile;
+    renderTabs();
+  }
+  
+  function closeFile(index) {
+    if (index < 0 || index >= openFiles.length) return;
+    
+    const file = openFiles[index];
+    if (file.hasUnsavedChanges) {
+      if (!confirm(`File "${file.path.split('/').pop()}" has unsaved changes. Close anyway?`)) {
+        return;
+      }
+    }
+    
+    openFiles.splice(index, 1);
+    
+    if (openFiles.length === 0) {
+      // No files open
+      activeFileIndex = -1;
+      currentFile = null;
+      hasUnsavedChanges = false;
+      if (editor) editor.setValue('');
+      document.getElementById('st-file').textContent = '';
+      showEditor(false);
+    } else {
+      // Switch to adjacent file
+      if (index === activeFileIndex) {
+        const newIndex = Math.min(index, openFiles.length - 1);
+        activeFileIndex = -1; // Reset to trigger proper switch
+        switchToFile(newIndex);
+      } else if (index < activeFileIndex) {
+        activeFileIndex--;
+      }
+    }
+    
+    renderTabs();
+  }
+  
+  // Auto-save functionality
+  async function autoSave() {
+    if (!editor || !currentFile || !hasUnsavedChanges) return;
+    try {
+      const data = editor.getValue();
+      const r = await fetch('/api/save-file', { 
+        method: 'POST', 
+        headers: {'Content-Type': 'application/json'}, 
+        body: JSON.stringify({ path: currentFile, data }) 
+      });
+      const j = await r.json();
+      if (j.ok) {
+        hasUnsavedChanges = false;
+        // Update status bar to show auto-saved
+        document.getElementById('st-file').textContent = currentFile + ' ✓';
+        setTimeout(() => {
+          if (document.getElementById('st-file').textContent.endsWith(' ✓')) {
+            document.getElementById('st-file').textContent = currentFile;
+          }
+        }, 2000);
+      }
+    } catch(e) {
+      console.log('Auto-save failed:', e);
+    }
+  }
+  
+  function scheduleAutoSave() {
+    if (autoSaveTimer) clearTimeout(autoSaveTimer);
+    autoSaveTimer = setTimeout(autoSave, 3000); // Auto-save after 3 seconds of inactivity
+  }
   function ensureMonaco(cb){ if(monacoLoaded){ cb(); return; } require.config({ paths: { 'vs': 'https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.51.0/min/vs' } }); require(['vs/editor/editor.main'], ()=>{ monacoLoaded=true; cb(); }); }
-  async function openInEditor(path){ try{ const r=await fetch('/api/read-file?path='+encodeURIComponent(path)); const j=await r.json(); if(!j.ok){ alert(j.error||'Gagal baca file'); return; } ensureMonaco(()=>{ showEditor(true); currentFile=path; document.getElementById('st-file').textContent=path; if(!editor){ editor = monaco.editor.create(document.getElementById('editor'), { value:j.data||'', language:'plaintext', theme:'vs-dark', automaticLayout:true, fontSize:14 }); } else { editor.setValue(j.data||''); } }); }catch(e){ alert('Gagal membuka: '+e); } }
+  // Get language from file extension
+  function getLanguageFromPath(path) {
+    const ext = path.split('.').pop().toLowerCase();
+    const langMap = {
+      'js': 'javascript', 'jsx': 'javascript', 'ts': 'typescript', 'tsx': 'typescript',
+      'py': 'python', 'pyw': 'python', 'html': 'html', 'htm': 'html', 'xml': 'xml',
+      'css': 'css', 'scss': 'scss', 'sass': 'sass', 'less': 'less',
+      'json': 'json', 'md': 'markdown', 'markdown': 'markdown',
+      'sh': 'shell', 'bash': 'shell', 'zsh': 'shell', 'fish': 'shell',
+      'php': 'php', 'rb': 'ruby', 'go': 'go', 'rs': 'rust',
+      'java': 'java', 'c': 'c', 'cpp': 'cpp', 'cc': 'cpp', 'cxx': 'cpp',
+      'h': 'c', 'hpp': 'cpp', 'cs': 'csharp', 'sql': 'sql',
+      'yaml': 'yaml', 'yml': 'yaml', 'toml': 'toml', 'ini': 'ini',
+      'dockerfile': 'dockerfile', 'vue': 'html', 'svelte': 'html'
+    };
+    return langMap[ext] || 'plaintext';
+  }
 
-  // Term input
-  t1.t.onData(d => { focusTarget='terminal1'; send(1,d); });
+  async function openInEditor(path){ 
+    try{ 
+      // Check if file is already open
+      const existingIndex = findFileIndex(path);
+      if (existingIndex >= 0) {
+        switchToFile(existingIndex);
+        return;
+      }
+      
+      const r=await fetch('/api/read-file?path='+encodeURIComponent(path)); 
+      const j=await r.json(); 
+      if(!j.ok){ alert(j.error||'Gagal baca file'); return; } 
+      
+      ensureMonaco(()=>{ 
+        showEditor(true); 
+        
+        // Add file to open files list
+        const fileObj = {
+          path: path,
+          content: j.data || '',
+          hasUnsavedChanges: false
+        };
+        
+        openFiles.push(fileObj);
+        const newIndex = openFiles.length - 1;
+        
+        const language = getLanguageFromPath(path); 
+        
+        if(!editor){ 
+          editor = monaco.editor.create(document.getElementById('editor'), { 
+            value: j.data||'', 
+            language: language, 
+            theme:'vs-dark', 
+            automaticLayout:true, 
+            fontSize:14, 
+            wordWrap: 'on', 
+            minimap: { enabled: false }, 
+            scrollBeyondLastLine: false 
+          }); 
+          // Add auto-save listener
+          editor.onDidChangeModelContent(() => { 
+            hasUnsavedChanges = true; 
+            if (activeFileIndex >= 0) {
+              openFiles[activeFileIndex].hasUnsavedChanges = true;
+            }
+            scheduleAutoSave(); 
+            renderTabs();
+          }); 
+        }
+        
+        switchToFile(newIndex);
+      }); 
+    }catch(e){ alert('Gagal membuka: '+e); } 
+  }
+
+  // Command history functions
+  function addToHistory(command) {
+    if (command.trim() && command !== commandHistory[commandHistory.length - 1]) {
+      commandHistory.push(command.trim());
+      // Keep only last 100 commands
+      if (commandHistory.length > 100) {
+        commandHistory.shift();
+      }
+      // Save to localStorage
+      localStorage.setItem('terminalHistory', JSON.stringify(commandHistory));
+    }
+    historyIndex = -1;
+    currentCommand = '';
+  }
+  
+  function navigateHistory(direction) {
+    if (commandHistory.length === 0) return null;
+    
+    if (direction === 'up') {
+      if (historyIndex === -1) {
+        historyIndex = commandHistory.length - 1;
+      } else if (historyIndex > 0) {
+        historyIndex--;
+      }
+    } else if (direction === 'down') {
+      if (historyIndex === -1) return null;
+      if (historyIndex < commandHistory.length - 1) {
+        historyIndex++;
+      } else {
+        historyIndex = -1;
+        return '';
+      }
+    }
+    
+    return historyIndex === -1 ? '' : commandHistory[historyIndex];
+  }
+  
+  // Load command history from localStorage
+  try {
+    const saved = localStorage.getItem('terminalHistory');
+    if (saved) commandHistory = JSON.parse(saved);
+  } catch(e) {}
+
+  // Context menu and copy/paste improvements
+  let contextMenu = null;
+  
+  function createContextMenu(x, y, items) {
+    removeContextMenu();
+    contextMenu = document.createElement('div');
+    contextMenu.className = 'context-menu';
+    contextMenu.style.left = x + 'px';
+    contextMenu.style.top = y + 'px';
+    
+    items.forEach(item => {
+      if (item === 'separator') {
+        const sep = document.createElement('div');
+        sep.className = 'context-menu-separator';
+        contextMenu.appendChild(sep);
+      } else {
+        const menuItem = document.createElement('div');
+        menuItem.className = 'context-menu-item';
+        menuItem.textContent = item.label;
+        menuItem.onclick = () => {
+          item.action();
+          removeContextMenu();
+        };
+        contextMenu.appendChild(menuItem);
+      }
+    });
+    
+    document.body.appendChild(contextMenu);
+    
+    // Adjust position if menu goes off-screen
+    const rect = contextMenu.getBoundingClientRect();
+    if (rect.right > window.innerWidth) {
+      contextMenu.style.left = (x - rect.width) + 'px';
+    }
+    if (rect.bottom > window.innerHeight) {
+      contextMenu.style.top = (y - rect.height) + 'px';
+    }
+  }
+  
+  function removeContextMenu() {
+    if (contextMenu) {
+      contextMenu.remove();
+      contextMenu = null;
+    }
+  }
+  
+  // Enhanced copy/paste functions
+  async function copySelection() {
+    try {
+      const selection = window.getSelection().toString();
+      if (selection) {
+        await navigator.clipboard.writeText(selection);
+        // Show feedback
+        const statusEl = document.getElementById('st-file');
+        const originalText = statusEl.textContent;
+        statusEl.textContent = 'Copied! ✓';
+        setTimeout(() => statusEl.textContent = originalText, 2000);
+      }
+    } catch(e) {
+      console.log('Copy failed:', e);
+    }
+  }
+  
+  async function pasteToTerminal(terminalNum = 1) {
+    try {
+      const text = await navigator.clipboard.readText();
+      if (text) {
+        send(terminalNum, text);
+      }
+    } catch(e) {
+      console.log('Paste failed:', e);
+    }
+  }
+  
+  // Add context menu to terminals
+  document.getElementById('term1').addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    const items = [
+      { label: '📋 Copy', action: copySelection },
+      { label: '📥 Paste', action: () => pasteToTerminal(1) },
+      'separator',
+      { label: '🗑️ Clear Terminal', action: () => document.getElementById('clear').click() },
+      { label: '🔄 Reset Terminal', action: () => document.getElementById('btn-reset')?.click() }
+    ];
+    createContextMenu(e.pageX, e.pageY, items);
+  });
+  
+  document.getElementById('term2').addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    const items = [
+      { label: '📋 Copy', action: copySelection },
+      { label: '📥 Paste', action: () => pasteToTerminal(2) },
+      'separator',
+      { label: '🗑️ Clear Terminal', action: () => document.getElementById('clear').click() }
+    ];
+    createContextMenu(e.pageX, e.pageY, items);
+  });
+  
+  // Add context menu to file list
+  document.getElementById('list').addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    const item = items[sel];
+    if (item) {
+      const menuItems = [];
+      if (item.is_dir) {
+        menuItems.push({ label: '📁 Open Directory', action: () => openItem() });
+        menuItems.push({ label: '🏠 Open in Terminal', action: () => {
+          const path = cwd.replace(/\/+$/,'') + '/' + item.name;
+          send(1, `cd "${path.replace(/"/g, '\\"')}"\n`);
+        }});
+      } else {
+        menuItems.push({ label: '📝 Open in Editor', action: () => openItem() });
+        menuItems.push({ label: '👁️ View File', action: () => {
+          const path = cwd.replace(/\/+$/,'') + '/' + item.name;
+          send(1, `cat "${path.replace(/"/g, '\\"')}"\n`);
+        }});
+        menuItems.push('separator');
+        menuItems.push({ label: '🌐 Share File', action: () => {
+          const path = cwd.replace(/\/+$/,'') + '/' + item.name;
+          shareFile(path);
+        }});
+      }
+      createContextMenu(e.pageX, e.pageY, menuItems);
+    }
+  });
+  
+  // Remove context menu on click outside
+  document.addEventListener('click', removeContextMenu);
+
+  // System Monitor
+  let systemMonitorVisible = false;
+  let systemMonitorInterval = null;
+  
+  function toggleSystemMonitor() {
+    systemMonitorVisible = !systemMonitorVisible;
+    const monitor = document.getElementById('systemMonitor');
+    
+    if (systemMonitorVisible) {
+      monitor.style.display = 'block';
+      updateSystemStats();
+      systemMonitorInterval = setInterval(updateSystemStats, 3000); // Update every 3 seconds
+    } else {
+      monitor.style.display = 'none';
+      if (systemMonitorInterval) {
+        clearInterval(systemMonitorInterval);
+        systemMonitorInterval = null;
+      }
+    }
+  }
+  
+  async function updateSystemStats() {
+    try {
+      const response = await fetch('/api/system-stats');
+      const stats = await response.json();
+      
+      if (stats.error) {
+        console.error('System stats error:', stats.error);
+        return;
+      }
+      
+      // Update CPU
+      document.getElementById('cpu-percent').textContent = `${stats.cpu.percent}%`;
+      document.getElementById('cpu-bar').style.width = `${stats.cpu.percent}%`;
+      
+      // Update Memory
+      document.getElementById('memory-usage').textContent = `${stats.memory.used_gb} GB / ${stats.memory.total_gb} GB`;
+      document.getElementById('memory-bar').style.width = `${stats.memory.percent}%`;
+      
+      // Update Disk
+      document.getElementById('disk-usage').textContent = `${stats.disk.used_gb} GB / ${stats.disk.total_gb} GB`;
+      document.getElementById('disk-bar').style.width = `${stats.disk.percent}%`;
+      
+      // Update other stats
+      document.getElementById('process-count').textContent = stats.system.processes;
+      document.getElementById('uptime').textContent = `${stats.system.uptime}h`;
+      
+    } catch (error) {
+      console.error('Failed to fetch system stats:', error);
+    }
+  }
+
+  // Plugin Manager
+  let pluginManagerVisible = false;
+  
+  function togglePluginManager() {
+    pluginManagerVisible = !pluginManagerVisible;
+    const manager = document.getElementById('pluginManager');
+    
+    if (pluginManagerVisible) {
+      manager.style.display = 'block';
+      loadPlugins();
+    } else {
+      manager.style.display = 'none';
+    }
+  }
+  
+  async function loadPlugins() {
+    try {
+      const response = await fetch('/api/plugins');
+      const data = await response.json();
+      
+      const pluginList = document.getElementById('plugin-list');
+      pluginList.innerHTML = '';
+      
+      if (data.plugins.length === 0) {
+        pluginList.innerHTML = '<div style="color:#666; text-align:center; padding:20px;">No plugins yet</div>';
+        return;
+      }
+      
+      // Get detailed plugin info
+      for (const pluginName of data.plugins) {
+        try {
+          const detailResponse = await fetch(`/api/plugins/${pluginName}`);
+          const pluginDetail = await detailResponse.json();
+          
+          const pluginDiv = document.createElement('div');
+          pluginDiv.className = 'plugin-item';
+          pluginDiv.innerHTML = `
+            <div class="plugin-name">${pluginName}</div>
+            ${pluginDetail.description ? `<div class="plugin-desc">${pluginDetail.description}</div>` : ''}
+            <div class="plugin-command">${pluginDetail.command || ''}</div>
+            <div class="plugin-actions">
+              <button onclick="executePlugin('${pluginName}')">Run</button>
+              <button onclick="executePluginWithArgs('${pluginName}')">Run with Args</button>
+              <button class="delete" onclick="deletePlugin('${pluginName}')">Delete</button>
+            </div>
+          `;
+          pluginList.appendChild(pluginDiv);
+        } catch (e) {
+          // Fallback for plugins without details
+          const pluginDiv = document.createElement('div');
+          pluginDiv.className = 'plugin-item';
+          pluginDiv.innerHTML = `
+            <div class="plugin-name">${pluginName}</div>
+            <div class="plugin-actions">
+              <button onclick="executePlugin('${pluginName}')">Run</button>
+              <button onclick="executePluginWithArgs('${pluginName}')">Run with Args</button>
+              <button class="delete" onclick="deletePlugin('${pluginName}')">Delete</button>
+            </div>
+          `;
+          pluginList.appendChild(pluginDiv);
+        }
+      }
+    } catch (error) {
+      console.error('Failed to load plugins:', error);
+    }
+  }
+  
+  async function addPlugin() {
+    const name = document.getElementById('plugin-name').value.trim();
+    const command = document.getElementById('plugin-command').value.trim();
+    const description = document.getElementById('plugin-desc').value.trim();
+    
+    if (!name || !command) {
+      alert('Name and command are required');
+      return;
+    }
+    
+    try {
+      const response = await fetch('/api/plugins', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, command, description })
+      });
+      
+      const result = await response.json();
+      if (result.ok) {
+        document.getElementById('plugin-name').value = '';
+        document.getElementById('plugin-command').value = '';
+        document.getElementById('plugin-desc').value = '';
+        loadPlugins();
+      } else {
+        alert(result.error || 'Failed to add plugin');
+      }
+    } catch (error) {
+      alert('Failed to add plugin: ' + error.message);
+    }
+  }
+  
+  async function executePlugin(name, args = '') {
+    try {
+      const response = await fetch(`/api/plugins/${name}/execute`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tid: tid1, args })
+      });
+      
+      const result = await response.json();
+      if (!result.ok) {
+        alert(result.error || 'Failed to execute plugin');
+      }
+    } catch (error) {
+      alert('Failed to execute plugin: ' + error.message);
+    }
+  }
+  
+  function executePluginWithArgs(name) {
+    const args = prompt(`Enter arguments for plugin "${name}":`) || '';
+    executePlugin(name, args);
+  }
+  
+  async function deletePlugin(name) {
+    if (!confirm(`Delete plugin "${name}"?`)) return;
+    
+    try {
+      const response = await fetch(`/api/plugins/${name}`, { method: 'DELETE' });
+      const result = await response.json();
+      if (result.ok) {
+        loadPlugins();
+      } else {
+        alert(result.error || 'Failed to delete plugin');
+      }
+    } catch (error) {
+      alert('Failed to delete plugin: ' + error.message);
+    }
+  }
+
+  // File Sharing
+  let sharePanelVisible = false;
+  
+  function toggleSharePanel() {
+    sharePanelVisible = !sharePanelVisible;
+    const panel = document.getElementById('sharePanel');
+    panel.style.display = sharePanelVisible ? 'block' : 'none';
+  }
+  
+  async function shareFile(path) {
+    try {
+      const response = await fetch('/api/share-file', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path })
+      });
+      
+      const result = await response.json();
+      if (result.ok) {
+        const fullUrl = window.location.origin + result.url;
+        
+        // Copy to clipboard
+        try {
+          await navigator.clipboard.writeText(fullUrl);
+          alert(`File shared! Link copied to clipboard:\n${fullUrl}`);
+        } catch (e) {
+          alert(`File shared! Link:\n${fullUrl}`);
+        }
+        
+        if (sharePanelVisible) loadSharedFiles();
+      } else {
+        alert(result.error || 'Failed to share file');
+      }
+    } catch (error) {
+      alert('Failed to share file: ' + error.message);
+    }
+  }
+  
+  async function loadSharedFiles() {
+    try {
+      const response = await fetch('/api/shared-files');
+      const data = await response.json();
+      
+      const shareList = document.getElementById('share-list');
+      shareList.innerHTML = '';
+      
+      if (data.files.length === 0) {
+        shareList.innerHTML = '<div style="color:#666; text-align:center; padding:20px;">No shared files</div>';
+        return;
+      }
+      
+      data.files.forEach(file => {
+        const fileDiv = document.createElement('div');
+        fileDiv.className = 'share-item';
+        const fullUrl = window.location.origin + file.url;
+        const timeAgo = Math.round((Date.now() - file.created * 1000) / 60000);
+        
+        fileDiv.innerHTML = `
+          <div class="share-filename">${file.filename}</div>
+          <div class="share-url">${fullUrl}</div>
+          <div style="color:#666; font-size:10px;">${timeAgo} minutes ago</div>
+          <div class="share-actions">
+            <button onclick="copyToClipboard('${fullUrl}')">Copy Link</button>
+            <button onclick="window.open('${fullUrl}', '_blank')">Download</button>
+          </div>
+        `;
+        shareList.appendChild(fileDiv);
+      });
+    } catch (error) {
+      console.error('Failed to load shared files:', error);
+    }
+  }
+  
+  async function copyToClipboard(text) {
+    try {
+      await navigator.clipboard.writeText(text);
+      // Show feedback
+      const statusEl = document.getElementById('st-file');
+      const originalText = statusEl.textContent;
+      statusEl.textContent = 'Link copied! ✓';
+      setTimeout(() => statusEl.textContent = originalText, 2000);
+    } catch (error) {
+      console.error('Failed to copy:', error);
+    }
+  }
+
+  // Screenshot functionality
+  async function takeScreenshot() {
+    try {
+      // Hide UI elements temporarily
+      const elementsToHide = [
+        document.getElementById('bottombar'),
+        document.getElementById('statusbar'),
+        document.getElementById('systemMonitor'),
+        document.getElementById('pluginManager'),
+        document.getElementById('sharePanel')
+      ].filter(el => el && el.style.display !== 'none');
+      
+      elementsToHide.forEach(el => el.style.visibility = 'hidden');
+      
+      // Choose what to capture
+      const choice = prompt(`Screenshot options:
+1. Terminal only
+2. Full application
+3. Editor only (if open)
+
+Enter 1, 2, or 3:`);
+      
+      let targetElement;
+      let filename;
+      
+      switch (choice) {
+        case '1':
+          targetElement = focusTarget === 'terminal2' && split ? 
+            document.getElementById('term2') : 
+            document.getElementById('term1');
+          filename = 'terminal-screenshot.png';
+          break;
+        case '2':
+          targetElement = document.getElementById('layout');
+          filename = 'app-screenshot.png';
+          break;
+        case '3':
+          if (document.getElementById('editorWrap').style.display === 'block') {
+            targetElement = document.getElementById('editorWrap');
+            filename = 'editor-screenshot.png';
+          } else {
+            alert('Editor is not open');
+            return;
+          }
+          break;
+        default:
+          return; // Cancel
+      }
+      
+      // Take screenshot
+      const canvas = await html2canvas(targetElement, {
+        backgroundColor: '#111111',
+        scale: 2, // Higher quality
+        logging: false,
+        useCORS: true,
+        allowTaint: true
+      });
+      
+      // Download the screenshot
+      const link = document.createElement('a');
+      link.download = filename;
+      link.href = canvas.toDataURL('image/png');
+      link.click();
+      
+      // Show success message
+      const statusEl = document.getElementById('st-file');
+      const originalText = statusEl.textContent;
+      statusEl.textContent = 'Screenshot saved! 📸';
+      setTimeout(() => statusEl.textContent = originalText, 3000);
+      
+    } catch (error) {
+      alert('Failed to take screenshot: ' + error.message);
+      console.error('Screenshot error:', error);
+    } finally {
+      // Restore hidden elements
+      setTimeout(() => {
+        const elementsToShow = [
+          document.getElementById('bottombar'),
+          document.getElementById('statusbar')
+        ];
+        elementsToShow.forEach(el => {
+          if (el) el.style.visibility = 'visible';
+        });
+      }, 100);
+    }
+  }
+
+  // Term input with command history
+  t1.t.onData(d => { 
+    focusTarget='terminal1'; 
+    // Handle arrow keys for command history
+    if (d === '\x1b[A') { // Up arrow
+      const cmd = navigateHistory('up');
+      if (cmd !== null) {
+        // Clear current line and write command
+        send(1, '\x1b[2K\r' + cmd);
+        currentCommand = cmd;
+        return;
+      }
+    } else if (d === '\x1b[B') { // Down arrow  
+      const cmd = navigateHistory('down');
+      if (cmd !== null) {
+        // Clear current line and write command
+        send(1, '\x1b[2K\r' + cmd);
+        currentCommand = cmd;
+        return;
+      }
+    } else if (d === '\r') { // Enter key
+      if (currentCommand) {
+        addToHistory(currentCommand);
+        currentCommand = '';
+      }
+    } else if (d === '\x7f' || d === '\b') { // Backspace
+      if (currentCommand) {
+        currentCommand = currentCommand.slice(0, -1);
+      }
+    } else if (d.length === 1 && d.charCodeAt(0) >= 32) { // Printable character
+      currentCommand += d;
+    }
+    
+    send(1, d); 
+  });
+  
   t2.t.onData(d => { focusTarget='terminal2'; send(2,d); });
 
-  // Tabs render and navigation
-  const tabs=[{name:'Nav', buttons:['btn-explorer','act-home','act-up','act-lsa','btn-openhere']},{name:'Term', buttons:['btn-tab','btn-esc','btn-copy','btn-reset','btn-scroll']},{name:'View', buttons:['btn-split','btn-log']},{name:'Edit', buttons:['btn-editor','btn-save']}];
-  let tabIdx = parseInt(localStorage.getItem('tabIdx')||'0',10); if(isNaN(tabIdx)) tabIdx=0;
-  function renderTab(){ const cont=document.getElementById('tab-content'); cont.innerHTML=''; const tab=tabs[tabIdx]; document.getElementById('tab-label').textContent=tab.name; const labels={ 'btn-explorer':'Explorer: On','act-home':'~','act-up':'..','act-lsa':'ls -la','btn-openhere':'Open Here','btn-tab':'Tab','btn-esc':'Esc','btn-copy':'Copy','btn-reset':'Reset','btn-scroll':'ScrollLock: Off','btn-split':'Split: Off','btn-log':'Log: Off','btn-editor':'Editor: Off','btn-save':'Save' }; tab.buttons.forEach(id=>{ const b=document.createElement('button'); b.id=id; b.textContent=labels[id]||id; cont.appendChild(b); }); bindTabButtons(); localStorage.setItem('tabIdx', tabIdx); }
-  document.getElementById('tab-prev').onclick=()=>{ tabIdx=(tabIdx-1+tabs.length)%tabs.length; renderTab(); };
-  document.getElementById('tab-next').onclick=()=>{ tabIdx=(tabIdx+1)%tabs.length; renderTab(); };
-  (function(){ const bar=document.getElementById('bottombar'); let sx=0, sy=0; bar.addEventListener('touchstart',e=>{ if(e.touches.length){ sx=e.touches[0].clientX; sy=e.touches[0].clientY; } },{passive:true}); bar.addEventListener('touchend',e=>{ const dx=(e.changedTouches[0].clientX - sx); const dy=(e.changedTouches[0].clientY - sy); if(Math.abs(dx)>50 && Math.abs(dx)>Math.abs(dy)){ if(dx<0) document.getElementById('tab-next').click(); else document.getElementById('tab-prev').click(); } }); })();
+  // Global Keyboard Shortcuts
+  document.addEventListener('keydown', (e) => {
+    // Ctrl+` - Toggle focus between terminal and explorer
+    if (e.ctrlKey && e.key === '`') {
+      e.preventDefault();
+      if (focusTarget === 'explorer') {
+        t1.t.focus();
+        setFocus('terminal1');
+      } else {
+        setFocus('explorer');
+      }
+    }
+    // Ctrl+E - Toggle editor
+    else if (e.ctrlKey && e.key === 'e') {
+      e.preventDefault();
+      const edBtn = document.getElementById('btn-editor');
+      if (edBtn) edBtn.click();
+    }
+    // Ctrl+T - New terminal (split)
+    else if (e.ctrlKey && e.key === 't') {
+      e.preventDefault();
+      const splitBtn = document.getElementById('btn-split');
+      if (splitBtn) splitBtn.click();
+    }
+    // Ctrl+S - Save file (when editor is active)
+    else if (e.ctrlKey && e.key === 's') {
+      if (editor && currentFile) {
+        e.preventDefault();
+        const saveBtn = document.getElementById('btn-save');
+        if (saveBtn) saveBtn.click();
+      }
+    }
+    // Ctrl+Shift+C - Clear terminal
+    else if (e.ctrlKey && e.shiftKey && e.key === 'C') {
+      e.preventDefault();
+      document.getElementById('clear').click();
+    }
+    // Ctrl+H - Go home
+    else if (e.ctrlKey && e.key === 'h') {
+      e.preventDefault();
+      const homeBtn = document.getElementById('act-home');
+      if (homeBtn) homeBtn.click();
+    }
+    // F11 - Toggle explorer visibility
+    else if (e.key === 'F11') {
+      e.preventDefault();
+      const exBtn = document.getElementById('btn-explorer');
+      if (exBtn) exBtn.click();
+    }
+    // F12 - Toggle system monitor
+    else if (e.key === 'F12') {
+      e.preventDefault();
+      toggleSystemMonitor();
+      const monitorBtn = document.getElementById('btn-monitor');
+      if (monitorBtn) monitorBtn.textContent = 'Monitor: ' + (systemMonitorVisible ? 'On' : 'Off');
+    }
+    // Ctrl+Shift+S - Take screenshot
+    else if (e.ctrlKey && e.shiftKey && e.key === 'S') {
+      e.preventDefault();
+      takeScreenshot();
+    }
+    // Ctrl+F - Find in editor
+    else if (e.ctrlKey && e.key === 'f') {
+      if (editor && currentFile) {
+        e.preventDefault();
+        editor.getAction('actions.find').run();
+      }
+    }
+    // Ctrl+H - Replace in editor  
+    else if (e.ctrlKey && e.key === 'h') {
+      if (editor && currentFile) {
+        e.preventDefault();
+        editor.getAction('editor.action.startFindReplaceAction').run();
+      }
+    }
+    // Ctrl+W - Close current file tab
+    else if (e.ctrlKey && e.key === 'w') {
+      if (activeFileIndex >= 0) {
+        e.preventDefault();
+        closeFile(activeFileIndex);
+      }
+    }
+    // Ctrl+Tab - Next file tab
+    else if (e.ctrlKey && e.key === 'Tab') {
+      if (openFiles.length > 1) {
+        e.preventDefault();
+        const nextIndex = (activeFileIndex + 1) % openFiles.length;
+        switchToFile(nextIndex);
+      }
+    }
+    // Escape - Focus terminal
+    else if (e.key === 'Escape' && focusTarget !== 'terminal1' && focusTarget !== 'terminal2') {
+      e.preventDefault();
+      t1.t.focus();
+      setFocus('terminal1');
+    }
+  });
+
+  // Navigation controls (duplicate code removed)
+
+  // Ensure explorer is visible on desktop
+  if (window.innerWidth > 768) {
+    explorerVisible = true;
+    const sidebar = document.getElementById('sidebar');
+    sidebar.style.display = 'block';
+    const exBtn = document.getElementById('btn-explorer');
+    if (exBtn) exBtn.textContent = 'Explorer: On';
+  }
 
   await attachOrNew(); poll(1); loadList(homePath||cwd); renderTab();
 })();
