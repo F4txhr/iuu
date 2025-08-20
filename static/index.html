@@ -9,7 +9,12 @@
   #sidebar { width: 260px; border-right:1px solid #333; overflow:auto; background:#0f0f0f; }
   #main { position:relative; flex:1; display:flex; flex-direction:column; }
   #editorWrap { display:none; position:relative; height:50%; border-bottom:1px solid #333; }
-  #editor { position:absolute; left:0; top:0; right:0; bottom:0; }
+  #editorTabs { height:32px; background:#1e1e1e; border-bottom:1px solid #333; display:flex; overflow-x:auto; }
+  .editor-tab { background:#2d2d30; color:#ccc; border:none; padding:6px 12px; border-right:1px solid #333; cursor:pointer; white-space:nowrap; position:relative; }
+  .editor-tab.active { background:#007acc; color:#fff; }
+  .editor-tab .close-btn { margin-left:8px; color:#999; font-weight:bold; }
+  .editor-tab .close-btn:hover { color:#fff; }
+  #editor { position:absolute; left:0; top:32px; right:0; bottom:0; }
   #termWrap { position:relative; flex:1; display:flex; gap:4px; padding:4px; }
   .termPane { flex:1; position:relative; border:1px solid #333; border-radius:6px; overflow:hidden; }
   .termPane .term { position:absolute; left:0; top:0; right:0; bottom:0; padding:6px; }
@@ -71,7 +76,10 @@
     <ul id="list" tabindex="0"></ul>
   </div>
   <div id="main">
-    <div id="editorWrap"><div id="editor"></div></div>
+    <div id="editorWrap">
+      <div id="editorTabs"></div>
+      <div id="editor"></div>
+    </div>
     <div id="termWrap">
       <div class="termPane"><div id="term1" class="term"></div></div>
       <div class="termPane" id="pane2" style="display:none"><div id="term2" class="term"></div></div>
@@ -197,9 +205,99 @@
   // clear
   document.getElementById('clear').onclick = ()=>{ if(focusTarget==='terminal2' && tid2) fetch('/api/term/clear',{method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({tid:tid2})}); else if(tid1) fetch('/api/term/clear',{method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({tid:tid1})}); };
 
-  // Editor (Monaco)
-  let editor=null, monacoLoaded=false, currentFile=null, autoSaveTimer=null, hasUnsavedChanges=false;
+  // Editor (Monaco) - Multiple file tabs support
+  let editor=null, monacoLoaded=false, currentFile=null, autoSaveTimer=null, hasUnsavedChanges=false, openFiles=[], activeFileIndex=-1;
   function showEditor(on){ document.getElementById('editorWrap').style.display = on?'block':'none'; const edBtn=document.getElementById('btn-editor'); if(edBtn) edBtn.textContent = 'Editor: ' + (on?'On':'Off'); const saveBtn=document.getElementById('btn-save'); if(saveBtn) saveBtn.style.display = on?'inline-block':'none'; }
+  
+  // Multiple file tabs management
+  function renderTabs() {
+    const tabsContainer = document.getElementById('editorTabs');
+    tabsContainer.innerHTML = '';
+    
+    openFiles.forEach((file, index) => {
+      const tab = document.createElement('button');
+      tab.className = 'editor-tab' + (index === activeFileIndex ? ' active' : '');
+      
+      const filename = file.path.split('/').pop();
+      const nameSpan = document.createElement('span');
+      nameSpan.textContent = filename + (file.hasUnsavedChanges ? ' •' : '');
+      
+      const closeBtn = document.createElement('span');
+      closeBtn.className = 'close-btn';
+      closeBtn.textContent = '×';
+      closeBtn.onclick = (e) => {
+        e.stopPropagation();
+        closeFile(index);
+      };
+      
+      tab.appendChild(nameSpan);
+      tab.appendChild(closeBtn);
+      tab.onclick = () => switchToFile(index);
+      
+      tabsContainer.appendChild(tab);
+    });
+  }
+  
+  function findFileIndex(path) {
+    return openFiles.findIndex(f => f.path === path);
+  }
+  
+  function switchToFile(index) {
+    if (index < 0 || index >= openFiles.length) return;
+    
+    // Save current file state
+    if (activeFileIndex >= 0 && editor) {
+      openFiles[activeFileIndex].content = editor.getValue();
+      openFiles[activeFileIndex].hasUnsavedChanges = hasUnsavedChanges;
+    }
+    
+    activeFileIndex = index;
+    const file = openFiles[index];
+    currentFile = file.path;
+    hasUnsavedChanges = file.hasUnsavedChanges;
+    
+    if (editor) {
+      editor.setValue(file.content);
+      monaco.editor.setModelLanguage(editor.getModel(), getLanguageFromPath(file.path));
+    }
+    
+    document.getElementById('st-file').textContent = currentFile;
+    renderTabs();
+  }
+  
+  function closeFile(index) {
+    if (index < 0 || index >= openFiles.length) return;
+    
+    const file = openFiles[index];
+    if (file.hasUnsavedChanges) {
+      if (!confirm(`File "${file.path.split('/').pop()}" has unsaved changes. Close anyway?`)) {
+        return;
+      }
+    }
+    
+    openFiles.splice(index, 1);
+    
+    if (openFiles.length === 0) {
+      // No files open
+      activeFileIndex = -1;
+      currentFile = null;
+      hasUnsavedChanges = false;
+      if (editor) editor.setValue('');
+      document.getElementById('st-file').textContent = '';
+      showEditor(false);
+    } else {
+      // Switch to adjacent file
+      if (index === activeFileIndex) {
+        const newIndex = Math.min(index, openFiles.length - 1);
+        activeFileIndex = -1; // Reset to trigger proper switch
+        switchToFile(newIndex);
+      } else if (index < activeFileIndex) {
+        activeFileIndex--;
+      }
+    }
+    
+    renderTabs();
+  }
   
   // Auto-save functionality
   async function autoSave() {
@@ -250,7 +348,60 @@
     return langMap[ext] || 'plaintext';
   }
 
-  async function openInEditor(path){ try{ const r=await fetch('/api/read-file?path='+encodeURIComponent(path)); const j=await r.json(); if(!j.ok){ alert(j.error||'Gagal baca file'); return; } ensureMonaco(()=>{ showEditor(true); currentFile=path; hasUnsavedChanges=false; document.getElementById('st-file').textContent=path; const language = getLanguageFromPath(path); if(!editor){ editor = monaco.editor.create(document.getElementById('editor'), { value:j.data||'', language: language, theme:'vs-dark', automaticLayout:true, fontSize:14, wordWrap: 'on', minimap: { enabled: false }, scrollBeyondLastLine: false }); // Add auto-save listener; editor.onDidChangeModelContent(() => { hasUnsavedChanges = true; scheduleAutoSave(); }); } else { editor.setValue(j.data||''); monaco.editor.setModelLanguage(editor.getModel(), language); hasUnsavedChanges = false; } }); }catch(e){ alert('Gagal membuka: '+e); } }
+  async function openInEditor(path){ 
+    try{ 
+      // Check if file is already open
+      const existingIndex = findFileIndex(path);
+      if (existingIndex >= 0) {
+        switchToFile(existingIndex);
+        return;
+      }
+      
+      const r=await fetch('/api/read-file?path='+encodeURIComponent(path)); 
+      const j=await r.json(); 
+      if(!j.ok){ alert(j.error||'Gagal baca file'); return; } 
+      
+      ensureMonaco(()=>{ 
+        showEditor(true); 
+        
+        // Add file to open files list
+        const fileObj = {
+          path: path,
+          content: j.data || '',
+          hasUnsavedChanges: false
+        };
+        
+        openFiles.push(fileObj);
+        const newIndex = openFiles.length - 1;
+        
+        const language = getLanguageFromPath(path); 
+        
+        if(!editor){ 
+          editor = monaco.editor.create(document.getElementById('editor'), { 
+            value: j.data||'', 
+            language: language, 
+            theme:'vs-dark', 
+            automaticLayout:true, 
+            fontSize:14, 
+            wordWrap: 'on', 
+            minimap: { enabled: false }, 
+            scrollBeyondLastLine: false 
+          }); 
+          // Add auto-save listener
+          editor.onDidChangeModelContent(() => { 
+            hasUnsavedChanges = true; 
+            if (activeFileIndex >= 0) {
+              openFiles[activeFileIndex].hasUnsavedChanges = true;
+            }
+            scheduleAutoSave(); 
+            renderTabs();
+          }); 
+        }
+        
+        switchToFile(newIndex);
+      }); 
+    }catch(e){ alert('Gagal membuka: '+e); } 
+  }
 
   // Command history functions
   function addToHistory(command) {
@@ -518,6 +669,21 @@
       if (editor && currentFile) {
         e.preventDefault();
         editor.getAction('editor.action.startFindReplaceAction').run();
+      }
+    }
+    // Ctrl+W - Close current file tab
+    else if (e.ctrlKey && e.key === 'w') {
+      if (activeFileIndex >= 0) {
+        e.preventDefault();
+        closeFile(activeFileIndex);
+      }
+    }
+    // Ctrl+Tab - Next file tab
+    else if (e.ctrlKey && e.key === 'Tab') {
+      if (openFiles.length > 1) {
+        e.preventDefault();
+        const nextIndex = (activeFileIndex + 1) % openFiles.length;
+        switchToFile(nextIndex);
       }
     }
     // Escape - Focus terminal
