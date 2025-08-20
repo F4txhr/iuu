@@ -58,6 +58,12 @@
   
   /* Prevent zoom on input focus */
   input, button, select, textarea { font-size: 16px; }
+  
+  /* Context menu */
+  .context-menu { position:fixed; background:#2a2f3a; border:1px solid #555; border-radius:6px; padding:4px 0; z-index:1000; box-shadow:0 4px 12px rgba(0,0,0,0.5); }
+  .context-menu-item { padding:8px 16px; cursor:pointer; color:#eee; font-size:14px; }
+  .context-menu-item:hover { background:#3a3f4a; }
+  .context-menu-separator { height:1px; background:#555; margin:4px 0; }
 </style>
 <div id="layout">
   <div id="sidebar">
@@ -99,7 +105,7 @@
   const t1 = mkTerm(document.getElementById('term1'));
   const t2 = mkTerm(document.getElementById('term2'));
 
-  let tid1=null, tid2=null, cwd=null, items=[], sel=0, focusTarget='explorer', scrollLock=false, homePath=null, split=false, logMode=false, explorerVisible=true;
+  let tid1=null, tid2=null, cwd=null, items=[], sel=0, focusTarget='explorer', scrollLock=false, homePath=null, split=false, logMode=false, explorerVisible=true, commandHistory=[], historyIndex=-1, currentCommand='';
 
   function setFocus(target){ focusTarget = target; if(target==='explorer' && explorerVisible){ document.getElementById('list').focus(); } }
   function spin(on){ document.getElementById('st-spin').style.display = on?'inline':'none'; }
@@ -246,8 +252,209 @@
 
   async function openInEditor(path){ try{ const r=await fetch('/api/read-file?path='+encodeURIComponent(path)); const j=await r.json(); if(!j.ok){ alert(j.error||'Gagal baca file'); return; } ensureMonaco(()=>{ showEditor(true); currentFile=path; hasUnsavedChanges=false; document.getElementById('st-file').textContent=path; const language = getLanguageFromPath(path); if(!editor){ editor = monaco.editor.create(document.getElementById('editor'), { value:j.data||'', language: language, theme:'vs-dark', automaticLayout:true, fontSize:14, wordWrap: 'on', minimap: { enabled: false }, scrollBeyondLastLine: false }); // Add auto-save listener; editor.onDidChangeModelContent(() => { hasUnsavedChanges = true; scheduleAutoSave(); }); } else { editor.setValue(j.data||''); monaco.editor.setModelLanguage(editor.getModel(), language); hasUnsavedChanges = false; } }); }catch(e){ alert('Gagal membuka: '+e); } }
 
-  // Term input
-  t1.t.onData(d => { focusTarget='terminal1'; send(1,d); });
+  // Command history functions
+  function addToHistory(command) {
+    if (command.trim() && command !== commandHistory[commandHistory.length - 1]) {
+      commandHistory.push(command.trim());
+      // Keep only last 100 commands
+      if (commandHistory.length > 100) {
+        commandHistory.shift();
+      }
+      // Save to localStorage
+      localStorage.setItem('terminalHistory', JSON.stringify(commandHistory));
+    }
+    historyIndex = -1;
+    currentCommand = '';
+  }
+  
+  function navigateHistory(direction) {
+    if (commandHistory.length === 0) return null;
+    
+    if (direction === 'up') {
+      if (historyIndex === -1) {
+        historyIndex = commandHistory.length - 1;
+      } else if (historyIndex > 0) {
+        historyIndex--;
+      }
+    } else if (direction === 'down') {
+      if (historyIndex === -1) return null;
+      if (historyIndex < commandHistory.length - 1) {
+        historyIndex++;
+      } else {
+        historyIndex = -1;
+        return '';
+      }
+    }
+    
+    return historyIndex === -1 ? '' : commandHistory[historyIndex];
+  }
+  
+  // Load command history from localStorage
+  try {
+    const saved = localStorage.getItem('terminalHistory');
+    if (saved) commandHistory = JSON.parse(saved);
+  } catch(e) {}
+
+  // Context menu and copy/paste improvements
+  let contextMenu = null;
+  
+  function createContextMenu(x, y, items) {
+    removeContextMenu();
+    contextMenu = document.createElement('div');
+    contextMenu.className = 'context-menu';
+    contextMenu.style.left = x + 'px';
+    contextMenu.style.top = y + 'px';
+    
+    items.forEach(item => {
+      if (item === 'separator') {
+        const sep = document.createElement('div');
+        sep.className = 'context-menu-separator';
+        contextMenu.appendChild(sep);
+      } else {
+        const menuItem = document.createElement('div');
+        menuItem.className = 'context-menu-item';
+        menuItem.textContent = item.label;
+        menuItem.onclick = () => {
+          item.action();
+          removeContextMenu();
+        };
+        contextMenu.appendChild(menuItem);
+      }
+    });
+    
+    document.body.appendChild(contextMenu);
+    
+    // Adjust position if menu goes off-screen
+    const rect = contextMenu.getBoundingClientRect();
+    if (rect.right > window.innerWidth) {
+      contextMenu.style.left = (x - rect.width) + 'px';
+    }
+    if (rect.bottom > window.innerHeight) {
+      contextMenu.style.top = (y - rect.height) + 'px';
+    }
+  }
+  
+  function removeContextMenu() {
+    if (contextMenu) {
+      contextMenu.remove();
+      contextMenu = null;
+    }
+  }
+  
+  // Enhanced copy/paste functions
+  async function copySelection() {
+    try {
+      const selection = window.getSelection().toString();
+      if (selection) {
+        await navigator.clipboard.writeText(selection);
+        // Show feedback
+        const statusEl = document.getElementById('st-file');
+        const originalText = statusEl.textContent;
+        statusEl.textContent = 'Copied! ✓';
+        setTimeout(() => statusEl.textContent = originalText, 2000);
+      }
+    } catch(e) {
+      console.log('Copy failed:', e);
+    }
+  }
+  
+  async function pasteToTerminal(terminalNum = 1) {
+    try {
+      const text = await navigator.clipboard.readText();
+      if (text) {
+        send(terminalNum, text);
+      }
+    } catch(e) {
+      console.log('Paste failed:', e);
+    }
+  }
+  
+  // Add context menu to terminals
+  document.getElementById('term1').addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    const items = [
+      { label: '📋 Copy', action: copySelection },
+      { label: '📥 Paste', action: () => pasteToTerminal(1) },
+      'separator',
+      { label: '🗑️ Clear Terminal', action: () => document.getElementById('clear').click() },
+      { label: '🔄 Reset Terminal', action: () => document.getElementById('btn-reset')?.click() }
+    ];
+    createContextMenu(e.pageX, e.pageY, items);
+  });
+  
+  document.getElementById('term2').addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    const items = [
+      { label: '📋 Copy', action: copySelection },
+      { label: '📥 Paste', action: () => pasteToTerminal(2) },
+      'separator',
+      { label: '🗑️ Clear Terminal', action: () => document.getElementById('clear').click() }
+    ];
+    createContextMenu(e.pageX, e.pageY, items);
+  });
+  
+  // Add context menu to file list
+  document.getElementById('list').addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    const item = items[sel];
+    if (item) {
+      const menuItems = [];
+      if (item.is_dir) {
+        menuItems.push({ label: '📁 Open Directory', action: () => openItem() });
+        menuItems.push({ label: '🏠 Open in Terminal', action: () => {
+          const path = cwd.replace(/\/+$/,'') + '/' + item.name;
+          send(1, `cd "${path.replace(/"/g, '\\"')}"\n`);
+        }});
+      } else {
+        menuItems.push({ label: '📝 Open in Editor', action: () => openItem() });
+        menuItems.push({ label: '👁️ View File', action: () => {
+          const path = cwd.replace(/\/+$/,'') + '/' + item.name;
+          send(1, `cat "${path.replace(/"/g, '\\"')}"\n`);
+        }});
+      }
+      createContextMenu(e.pageX, e.pageY, menuItems);
+    }
+  });
+  
+  // Remove context menu on click outside
+  document.addEventListener('click', removeContextMenu);
+
+  // Term input with command history
+  t1.t.onData(d => { 
+    focusTarget='terminal1'; 
+    // Handle arrow keys for command history
+    if (d === '\x1b[A') { // Up arrow
+      const cmd = navigateHistory('up');
+      if (cmd !== null) {
+        // Clear current line and write command
+        send(1, '\x1b[2K\r' + cmd);
+        currentCommand = cmd;
+        return;
+      }
+    } else if (d === '\x1b[B') { // Down arrow  
+      const cmd = navigateHistory('down');
+      if (cmd !== null) {
+        // Clear current line and write command
+        send(1, '\x1b[2K\r' + cmd);
+        currentCommand = cmd;
+        return;
+      }
+    } else if (d === '\r') { // Enter key
+      if (currentCommand) {
+        addToHistory(currentCommand);
+        currentCommand = '';
+      }
+    } else if (d === '\x7f' || d === '\b') { // Backspace
+      if (currentCommand) {
+        currentCommand = currentCommand.slice(0, -1);
+      }
+    } else if (d.length === 1 && d.charCodeAt(0) >= 32) { // Printable character
+      currentCommand += d;
+    }
+    
+    send(1, d); 
+  });
+  
   t2.t.onData(d => { focusTarget='terminal2'; send(2,d); });
 
   // Global Keyboard Shortcuts
