@@ -10,8 +10,8 @@ SESS_LOCK = threading.Lock()
 PLUGINS = {
     # System utilities
     'sysinfo': {
-        'command': 'uname -a && echo "---" && df -h && echo "---" && free -h && echo "---" && ps aux | head -10',
-        'description': 'Show system information (OS, disk, memory, processes)',
+        'command': 'echo "=== SYSTEM INFO ===" && uname -a && echo -e "\n=== DISK USAGE ===" && df -h 2>/dev/null || du -sh / 2>/dev/null && echo -e "\n=== MEMORY ===" && (free -h 2>/dev/null || cat /proc/meminfo 2>/dev/null | head -5) && echo -e "\n=== PROCESSES ===" && (ps aux 2>/dev/null | head -10 || ps | head -10)',
+        'description': 'Show system information (OS, disk, memory, processes) - Termux compatible',
         'created': time.time()
     },
     'weather': {
@@ -32,8 +32,8 @@ PLUGINS = {
         'created': time.time()
     },
     'ports': {
-        'command': 'netstat -tulpn | grep LISTEN | head -10',
-        'description': 'Show listening ports',
+        'command': 'netstat -tulpn 2>/dev/null | grep LISTEN | head -10 || (echo "netstat not available, trying ss..." && ss -tulpn 2>/dev/null | grep LISTEN | head -10) || echo "Port scanning tools not available in this environment"',
+        'description': 'Show listening ports - Termux compatible',
         'created': time.time()
     },
     'diskusage': {
@@ -263,27 +263,105 @@ def save_file():
 @app.route('/api/system-stats')
 def system_stats():
     try:
-        # CPU usage
-        cpu_percent = psutil.cpu_percent(interval=1)
-        cpu_count = psutil.cpu_count()
+        stats = {}
         
-        # Memory usage
-        memory = psutil.virtual_memory()
-        memory_total = memory.total
-        memory_used = memory.used
-        memory_percent = memory.percent
+        # CPU usage - with fallback for Android/Termux
+        try:
+            cpu_percent = psutil.cpu_percent(interval=0.1)  # Shorter interval for Android
+            cpu_count = psutil.cpu_count()
+            stats['cpu'] = {
+                'percent': round(cpu_percent, 1),
+                'count': cpu_count or 1
+            }
+        except:
+            # Fallback for Android/Termux
+            stats['cpu'] = {
+                'percent': 0.0,
+                'count': 1
+            }
+        
+        # Memory usage - with fallback
+        try:
+            memory = psutil.virtual_memory()
+            stats['memory'] = {
+                'total': memory.total,
+                'used': memory.used,
+                'percent': round(memory.percent, 1),
+                'total_gb': round(memory.total / (1024**3), 2),
+                'used_gb': round(memory.used / (1024**3), 2)
+            }
+        except:
+            # Fallback using /proc/meminfo if available
+            try:
+                with open('/proc/meminfo', 'r') as f:
+                    lines = f.readlines()
+                    mem_total = mem_available = 0
+                    for line in lines:
+                        if line.startswith('MemTotal:'):
+                            mem_total = int(line.split()[1]) * 1024
+                        elif line.startswith('MemAvailable:'):
+                            mem_available = int(line.split()[1]) * 1024
+                    mem_used = mem_total - mem_available
+                    mem_percent = (mem_used / mem_total * 100) if mem_total > 0 else 0
+                    
+                    stats['memory'] = {
+                        'total': mem_total,
+                        'used': mem_used,
+                        'percent': round(mem_percent, 1),
+                        'total_gb': round(mem_total / (1024**3), 2),
+                        'used_gb': round(mem_used / (1024**3), 2)
+                    }
+            except:
+                stats['memory'] = {
+                    'total': 0,
+                    'used': 0,
+                    'percent': 0.0,
+                    'total_gb': 0.0,
+                    'used_gb': 0.0
+                }
         
         # Disk usage
-        disk = psutil.disk_usage('/')
-        disk_total = disk.total
-        disk_used = disk.used
-        disk_percent = (disk_used / disk_total) * 100
+        try:
+            disk = psutil.disk_usage('/')
+            stats['disk'] = {
+                'total': disk.total,
+                'used': disk.used,
+                'percent': round((disk.used / disk.total) * 100, 1),
+                'total_gb': round(disk.total / (1024**3), 2),
+                'used_gb': round(disk.used / (1024**3), 2)
+            }
+        except:
+            stats['disk'] = {
+                'total': 0,
+                'used': 0,
+                'percent': 0.0,
+                'total_gb': 0.0,
+                'used_gb': 0.0
+            }
         
-        # Network I/O
-        net_io = psutil.net_io_counters()
+        # Network I/O - with fallback
+        try:
+            net_io = psutil.net_io_counters()
+            stats['network'] = {
+                'bytes_sent': net_io.bytes_sent,
+                'bytes_recv': net_io.bytes_recv
+            }
+        except:
+            stats['network'] = {
+                'bytes_sent': 0,
+                'bytes_recv': 0
+            }
         
-        # Process count
-        process_count = len(psutil.pids())
+        # Process count and system info
+        try:
+            process_count = len(psutil.pids())
+        except:
+            # Fallback count processes manually
+            try:
+                import glob
+                process_count = len(glob.glob('/proc/[0-9]*'))
+            except:
+                process_count = 0
         
         # Load average (Unix only)
         try:
@@ -291,41 +369,36 @@ def system_stats():
         except:
             load_avg = [0, 0, 0]
         
-        # Boot time
-        boot_time = psutil.boot_time()
-        uptime = time.time() - boot_time
+        # Boot time with fallback
+        try:
+            boot_time = psutil.boot_time()
+            uptime = time.time() - boot_time
+        except:
+            # Fallback uptime calculation
+            try:
+                with open('/proc/uptime', 'r') as f:
+                    uptime = float(f.read().split()[0])
+            except:
+                uptime = 0
         
-        return jsonify({
-            'cpu': {
-                'percent': round(cpu_percent, 1),
-                'count': cpu_count
-            },
-            'memory': {
-                'total': memory_total,
-                'used': memory_used,
-                'percent': round(memory_percent, 1),
-                'total_gb': round(memory_total / (1024**3), 2),
-                'used_gb': round(memory_used / (1024**3), 2)
-            },
-            'disk': {
-                'total': disk_total,
-                'used': disk_used,
-                'percent': round(disk_percent, 1),
-                'total_gb': round(disk_total / (1024**3), 2),
-                'used_gb': round(disk_used / (1024**3), 2)
-            },
-            'network': {
-                'bytes_sent': net_io.bytes_sent,
-                'bytes_recv': net_io.bytes_recv
-            },
-            'system': {
-                'processes': process_count,
-                'load_avg': [round(x, 2) for x in load_avg],
-                'uptime': round(uptime / 3600, 1)  # hours
-            }
-        })
+        stats['system'] = {
+            'processes': process_count,
+            'load_avg': [round(x, 2) for x in load_avg],
+            'uptime': round(uptime / 3600, 1)  # hours
+        }
+        
+        return jsonify(stats)
+        
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        # Return minimal stats if everything fails
+        return jsonify({
+            'cpu': {'percent': 0.0, 'count': 1},
+            'memory': {'total': 0, 'used': 0, 'percent': 0.0, 'total_gb': 0.0, 'used_gb': 0.0},
+            'disk': {'total': 0, 'used': 0, 'percent': 0.0, 'total_gb': 0.0, 'used_gb': 0.0},
+            'network': {'bytes_sent': 0, 'bytes_recv': 0},
+            'system': {'processes': 0, 'load_avg': [0, 0, 0], 'uptime': 0.0},
+            'error': f'Limited system access: {str(e)}'
+        })
 
 
 @app.route('/api/plugins', methods=['GET'])
@@ -469,4 +542,11 @@ if __name__ == '__main__':
     os.makedirs('static', exist_ok=True)
     print("🚀 Starting web terminal at http://127.0.0.1:8080")
     print("📝 For personal use only - accessible from this computer only")
+    
+    # Detect if running on Android/Termux
+    if 'ANDROID_DATA' in os.environ or 'TERMUX_VERSION' in os.environ:
+        print("📱 Detected Android/Termux environment")
+        print("⚠️  Some system monitoring features may be limited due to Android restrictions")
+        print("✅ All other features (terminal, editor, plugins, file sharing) work perfectly!")
+    
     app.run(host='127.0.0.1', port=8080, debug=False)
