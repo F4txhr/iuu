@@ -83,6 +83,34 @@
   .progress-fill.disk { background:#9C27B0; }
   #systemMonitor .close-btn { position:absolute; top:8px; right:12px; cursor:pointer; color:#999; font-weight:bold; }
   #systemMonitor .close-btn:hover { color:#fff; }
+  
+  /* Plugin Manager */
+  #pluginManager { position:fixed; top:10px; left:10px; width:320px; background:#1e1e1e; border:1px solid #333; border-radius:8px; padding:12px; z-index:20; display:none; font-size:12px; max-height:400px; overflow-y:auto; }
+  #pluginManager h3 { margin:0 0 12px 0; color:#9cf; font-size:14px; }
+  #pluginManager .close-btn { position:absolute; top:8px; right:12px; cursor:pointer; color:#999; font-weight:bold; }
+  #pluginManager .close-btn:hover { color:#fff; }
+  .plugin-item { background:#2a2a2a; border:1px solid #444; border-radius:4px; padding:8px; margin:8px 0; }
+  .plugin-name { color:#9cf; font-weight:bold; }
+  .plugin-desc { color:#ccc; font-size:11px; margin:4px 0; }
+  .plugin-command { color:#888; font-family:monospace; font-size:10px; }
+  .plugin-actions { margin-top:8px; }
+  .plugin-actions button { background:#333; color:#fff; border:none; padding:4px 8px; border-radius:3px; margin-right:4px; cursor:pointer; font-size:10px; }
+  .plugin-actions button:hover { background:#555; }
+  .plugin-actions .delete { background:#d32f2f; }
+  .plugin-form { background:#2a2a2a; border:1px solid #444; border-radius:4px; padding:12px; margin:12px 0; }
+  .plugin-form input, .plugin-form textarea { width:100%; background:#333; color:#fff; border:1px solid #555; border-radius:3px; padding:6px; margin:4px 0; font-size:12px; }
+  .plugin-form button { background:#007acc; color:#fff; border:none; padding:6px 12px; border-radius:3px; cursor:pointer; }
+  
+  /* File Share Panel */
+  #sharePanel { position:fixed; bottom:100px; right:10px; width:300px; background:#1e1e1e; border:1px solid #333; border-radius:8px; padding:12px; z-index:20; display:none; font-size:12px; max-height:300px; overflow-y:auto; }
+  #sharePanel h3 { margin:0 0 12px 0; color:#9cf; font-size:14px; }
+  #sharePanel .close-btn { position:absolute; top:8px; right:12px; cursor:pointer; color:#999; font-weight:bold; }
+  #sharePanel .close-btn:hover { color:#fff; }
+  .share-item { background:#2a2a2a; border:1px solid #444; border-radius:4px; padding:8px; margin:8px 0; }
+  .share-filename { color:#9cf; font-weight:bold; }
+  .share-url { color:#888; font-family:monospace; font-size:10px; word-break:break-all; }
+  .share-actions { margin-top:4px; }
+  .share-actions button { background:#333; color:#fff; border:none; padding:2px 6px; border-radius:3px; margin-right:4px; cursor:pointer; font-size:10px; }
 </style>
 <div id="layout">
   <div id="sidebar">
@@ -150,9 +178,29 @@
     <span class="stat-value" id="uptime">0h</span>
   </div>
 </div>
+<div id="pluginManager">
+  <span class="close-btn" onclick="togglePluginManager()">×</span>
+  <h3>🔌 Plugin Manager</h3>
+  
+  <div class="plugin-form">
+    <input type="text" id="plugin-name" placeholder="Plugin Name (e.g., 'weather')">
+    <textarea id="plugin-command" placeholder="Command (use $ARGS for arguments)&#10;e.g., curl wttr.in/$ARGS"></textarea>
+    <input type="text" id="plugin-desc" placeholder="Description (optional)">
+    <button onclick="addPlugin()">Add Plugin</button>
+  </div>
+  
+  <div id="plugin-list"></div>
+</div>
+
+<div id="sharePanel">
+  <span class="close-btn" onclick="toggleSharePanel()">×</span>
+  <h3>🌐 Shared Files</h3>
+  <div id="share-list">No shared files</div>
+</div>
 <script src="./static/xterm.min.js"></script>
 <script src="./static/xterm-addon-fit.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.51.0/min/vs/loader.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 <script>
 (async function(){
   // Status info
@@ -223,10 +271,13 @@
     ]},{name:'View', buttons:[
       {id:'btn-split', label:'Split: Off'},
       {id:'btn-log', label:'Log: Off'},
-      {id:'btn-monitor', label:'Monitor: Off'}
+      {id:'btn-monitor', label:'Monitor: Off'},
+      {id:'btn-plugins', label:'Plugins'},
+      {id:'btn-share', label:'Share Files'}
     ]},{name:'Edit', buttons:[
       {id:'btn-editor', label:'Editor: Off'},
-      {id:'btn-save', label:'Save'}
+      {id:'btn-save', label:'Save'},
+      {id:'btn-screenshot', label:'📸 Screenshot'}
     ]}];
   let tabIdx = parseInt(localStorage.getItem('tabIdx')||'0',10); if(isNaN(tabIdx)) tabIdx=0;
   function renderTab(){ const cont=document.getElementById('tab-content'); cont.innerHTML=''; const tab=tabs[tabIdx]; document.getElementById('tab-label').textContent = tab.name; tab.buttons.forEach(b=>{ const btn=document.createElement('button'); btn.id=b.id; btn.textContent=b.label; cont.appendChild(btn); }); bindTabButtons(); localStorage.setItem('tabIdx', tabIdx); }
@@ -249,8 +300,11 @@
     const splitBtn=document.getElementById('btn-split'); if(splitBtn) splitBtn.onclick=async ()=>{ const pane2=document.getElementById('pane2'); split=!split; splitBtn.textContent='Split: '+(split?'On':'Off'); if(split){ pane2.style.display='block'; if(!tid2){ await newTerm(2); poll(2); } } else { pane2.style.display='none'; } };
     const logBtn=document.getElementById('btn-log'); if(logBtn) logBtn.onclick=async ()=>{ logMode=!logMode; logBtn.textContent='Log: '+(logMode?'On':'Off'); if(logMode){ const p=prompt('Path file utk tail -f:'); if(!p){ logMode=false; logBtn.textContent='Log: Off'; return; } if(!tid2){ await newTerm(2); poll(2); split=true; document.getElementById('pane2').style.display='block'; if(splitBtn) splitBtn.textContent='Split: On'; } t2.t.clear(); await send(2, `tail -f "${p.replace(/\"/g,'\\\"')}"\n`); } else { if(tid2){ await send(2, '\x03'); } } };
     const monitorBtn=document.getElementById('btn-monitor'); if(monitorBtn) monitorBtn.onclick=()=>{ toggleSystemMonitor(); monitorBtn.textContent='Monitor: '+(systemMonitorVisible?'On':'Off'); };
+    const pluginsBtn=document.getElementById('btn-plugins'); if(pluginsBtn) pluginsBtn.onclick=()=>{ togglePluginManager(); };
+    const shareBtn=document.getElementById('btn-share'); if(shareBtn) shareBtn.onclick=()=>{ toggleSharePanel(); loadSharedFiles(); };
     const edBtn=document.getElementById('btn-editor'); if(edBtn) edBtn.onclick=()=>{ const on = document.getElementById('editorWrap').style.display!=='block'; showEditor(on); };
     const saveBtn=document.getElementById('btn-save'); if(saveBtn) saveBtn.onclick=async ()=>{ if(!currentFile||!editor) return; const data=editor.getValue(); const r=await fetch('/api/save-file',{ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ path:currentFile, data }) }); const j=await r.json(); if(!j.ok){ alert(j.error||'Gagal simpan'); } };
+    const screenshotBtn=document.getElementById('btn-screenshot'); if(screenshotBtn) screenshotBtn.onclick=()=>{ takeScreenshot(); };
   }
 
   // back button
@@ -615,6 +669,11 @@
           const path = cwd.replace(/\/+$/,'') + '/' + item.name;
           send(1, `cat "${path.replace(/"/g, '\\"')}"\n`);
         }});
+        menuItems.push('separator');
+        menuItems.push({ label: '🌐 Share File', action: () => {
+          const path = cwd.replace(/\/+$/,'') + '/' + item.name;
+          shareFile(path);
+        }});
       }
       createContextMenu(e.pageX, e.pageY, menuItems);
     }
@@ -672,6 +731,294 @@
       
     } catch (error) {
       console.error('Failed to fetch system stats:', error);
+    }
+  }
+
+  // Plugin Manager
+  let pluginManagerVisible = false;
+  
+  function togglePluginManager() {
+    pluginManagerVisible = !pluginManagerVisible;
+    const manager = document.getElementById('pluginManager');
+    
+    if (pluginManagerVisible) {
+      manager.style.display = 'block';
+      loadPlugins();
+    } else {
+      manager.style.display = 'none';
+    }
+  }
+  
+  async function loadPlugins() {
+    try {
+      const response = await fetch('/api/plugins');
+      const data = await response.json();
+      
+      const pluginList = document.getElementById('plugin-list');
+      pluginList.innerHTML = '';
+      
+      if (data.plugins.length === 0) {
+        pluginList.innerHTML = '<div style="color:#666; text-align:center; padding:20px;">No plugins yet</div>';
+        return;
+      }
+      
+      for (const pluginName of data.plugins) {
+        const pluginDiv = document.createElement('div');
+        pluginDiv.className = 'plugin-item';
+        pluginDiv.innerHTML = `
+          <div class="plugin-name">${pluginName}</div>
+          <div class="plugin-actions">
+            <button onclick="executePlugin('${pluginName}')">Run</button>
+            <button onclick="executePluginWithArgs('${pluginName}')">Run with Args</button>
+            <button class="delete" onclick="deletePlugin('${pluginName}')">Delete</button>
+          </div>
+        `;
+        pluginList.appendChild(pluginDiv);
+      }
+    } catch (error) {
+      console.error('Failed to load plugins:', error);
+    }
+  }
+  
+  async function addPlugin() {
+    const name = document.getElementById('plugin-name').value.trim();
+    const command = document.getElementById('plugin-command').value.trim();
+    const description = document.getElementById('plugin-desc').value.trim();
+    
+    if (!name || !command) {
+      alert('Name and command are required');
+      return;
+    }
+    
+    try {
+      const response = await fetch('/api/plugins', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, command, description })
+      });
+      
+      const result = await response.json();
+      if (result.ok) {
+        document.getElementById('plugin-name').value = '';
+        document.getElementById('plugin-command').value = '';
+        document.getElementById('plugin-desc').value = '';
+        loadPlugins();
+      } else {
+        alert(result.error || 'Failed to add plugin');
+      }
+    } catch (error) {
+      alert('Failed to add plugin: ' + error.message);
+    }
+  }
+  
+  async function executePlugin(name, args = '') {
+    try {
+      const response = await fetch(`/api/plugins/${name}/execute`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tid: tid1, args })
+      });
+      
+      const result = await response.json();
+      if (!result.ok) {
+        alert(result.error || 'Failed to execute plugin');
+      }
+    } catch (error) {
+      alert('Failed to execute plugin: ' + error.message);
+    }
+  }
+  
+  function executePluginWithArgs(name) {
+    const args = prompt(`Enter arguments for plugin "${name}":`) || '';
+    executePlugin(name, args);
+  }
+  
+  async function deletePlugin(name) {
+    if (!confirm(`Delete plugin "${name}"?`)) return;
+    
+    try {
+      const response = await fetch(`/api/plugins/${name}`, { method: 'DELETE' });
+      const result = await response.json();
+      if (result.ok) {
+        loadPlugins();
+      } else {
+        alert(result.error || 'Failed to delete plugin');
+      }
+    } catch (error) {
+      alert('Failed to delete plugin: ' + error.message);
+    }
+  }
+
+  // File Sharing
+  let sharePanelVisible = false;
+  
+  function toggleSharePanel() {
+    sharePanelVisible = !sharePanelVisible;
+    const panel = document.getElementById('sharePanel');
+    panel.style.display = sharePanelVisible ? 'block' : 'none';
+  }
+  
+  async function shareFile(path) {
+    try {
+      const response = await fetch('/api/share-file', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path })
+      });
+      
+      const result = await response.json();
+      if (result.ok) {
+        const fullUrl = window.location.origin + result.url;
+        
+        // Copy to clipboard
+        try {
+          await navigator.clipboard.writeText(fullUrl);
+          alert(`File shared! Link copied to clipboard:\n${fullUrl}`);
+        } catch (e) {
+          alert(`File shared! Link:\n${fullUrl}`);
+        }
+        
+        if (sharePanelVisible) loadSharedFiles();
+      } else {
+        alert(result.error || 'Failed to share file');
+      }
+    } catch (error) {
+      alert('Failed to share file: ' + error.message);
+    }
+  }
+  
+  async function loadSharedFiles() {
+    try {
+      const response = await fetch('/api/shared-files');
+      const data = await response.json();
+      
+      const shareList = document.getElementById('share-list');
+      shareList.innerHTML = '';
+      
+      if (data.files.length === 0) {
+        shareList.innerHTML = '<div style="color:#666; text-align:center; padding:20px;">No shared files</div>';
+        return;
+      }
+      
+      data.files.forEach(file => {
+        const fileDiv = document.createElement('div');
+        fileDiv.className = 'share-item';
+        const fullUrl = window.location.origin + file.url;
+        const timeAgo = Math.round((Date.now() - file.created * 1000) / 60000);
+        
+        fileDiv.innerHTML = `
+          <div class="share-filename">${file.filename}</div>
+          <div class="share-url">${fullUrl}</div>
+          <div style="color:#666; font-size:10px;">${timeAgo} minutes ago</div>
+          <div class="share-actions">
+            <button onclick="copyToClipboard('${fullUrl}')">Copy Link</button>
+            <button onclick="window.open('${fullUrl}', '_blank')">Download</button>
+          </div>
+        `;
+        shareList.appendChild(fileDiv);
+      });
+    } catch (error) {
+      console.error('Failed to load shared files:', error);
+    }
+  }
+  
+  async function copyToClipboard(text) {
+    try {
+      await navigator.clipboard.writeText(text);
+      // Show feedback
+      const statusEl = document.getElementById('st-file');
+      const originalText = statusEl.textContent;
+      statusEl.textContent = 'Link copied! ✓';
+      setTimeout(() => statusEl.textContent = originalText, 2000);
+    } catch (error) {
+      console.error('Failed to copy:', error);
+    }
+  }
+
+  // Screenshot functionality
+  async function takeScreenshot() {
+    try {
+      // Hide UI elements temporarily
+      const elementsToHide = [
+        document.getElementById('bottombar'),
+        document.getElementById('statusbar'),
+        document.getElementById('systemMonitor'),
+        document.getElementById('pluginManager'),
+        document.getElementById('sharePanel')
+      ].filter(el => el && el.style.display !== 'none');
+      
+      elementsToHide.forEach(el => el.style.visibility = 'hidden');
+      
+      // Choose what to capture
+      const choice = prompt(`Screenshot options:
+1. Terminal only
+2. Full application
+3. Editor only (if open)
+
+Enter 1, 2, or 3:`);
+      
+      let targetElement;
+      let filename;
+      
+      switch (choice) {
+        case '1':
+          targetElement = focusTarget === 'terminal2' && split ? 
+            document.getElementById('term2') : 
+            document.getElementById('term1');
+          filename = 'terminal-screenshot.png';
+          break;
+        case '2':
+          targetElement = document.getElementById('layout');
+          filename = 'app-screenshot.png';
+          break;
+        case '3':
+          if (document.getElementById('editorWrap').style.display === 'block') {
+            targetElement = document.getElementById('editorWrap');
+            filename = 'editor-screenshot.png';
+          } else {
+            alert('Editor is not open');
+            return;
+          }
+          break;
+        default:
+          return; // Cancel
+      }
+      
+      // Take screenshot
+      const canvas = await html2canvas(targetElement, {
+        backgroundColor: '#111111',
+        scale: 2, // Higher quality
+        logging: false,
+        useCORS: true,
+        allowTaint: true
+      });
+      
+      // Download the screenshot
+      const link = document.createElement('a');
+      link.download = filename;
+      link.href = canvas.toDataURL('image/png');
+      link.click();
+      
+      // Show success message
+      const statusEl = document.getElementById('st-file');
+      const originalText = statusEl.textContent;
+      statusEl.textContent = 'Screenshot saved! 📸';
+      setTimeout(() => statusEl.textContent = originalText, 3000);
+      
+    } catch (error) {
+      alert('Failed to take screenshot: ' + error.message);
+      console.error('Screenshot error:', error);
+    } finally {
+      // Restore hidden elements
+      setTimeout(() => {
+        const elementsToShow = [
+          document.getElementById('bottombar'),
+          document.getElementById('statusbar')
+        ];
+        elementsToShow.forEach(el => {
+          if (el) el.style.visibility = 'visible';
+        });
+      }, 100);
     }
   }
 
@@ -768,6 +1115,11 @@
       toggleSystemMonitor();
       const monitorBtn = document.getElementById('btn-monitor');
       if (monitorBtn) monitorBtn.textContent = 'Monitor: ' + (systemMonitorVisible ? 'On' : 'Off');
+    }
+    // Ctrl+Shift+S - Take screenshot
+    else if (e.ctrlKey && e.shiftKey && e.key === 'S') {
+      e.preventDefault();
+      takeScreenshot();
     }
     // Ctrl+F - Find in editor
     else if (e.ctrlKey && e.key === 'f') {

@@ -1,10 +1,14 @@
 from flask import Flask, request, jsonify, send_from_directory
-import os, pty, select, threading, subprocess, signal, socket, getpass, psutil, time
+import os, pty, select, threading, subprocess, signal, socket, getpass, psutil, time, json, uuid
 
 app = Flask(__name__, static_url_path='/static')
 
 SESSIONS = {}
 SESS_LOCK = threading.Lock()
+
+# Plugin system
+PLUGINS = {}
+SHARED_FILES = {}  # For file sharing
 
 
 def detect_shell():
@@ -266,6 +270,136 @@ def system_stats():
         })
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/plugins', methods=['GET'])
+def get_plugins():
+    return jsonify({'plugins': list(PLUGINS.keys())})
+
+
+@app.route('/api/plugins', methods=['POST'])
+def add_plugin():
+    data = request.json or {}
+    name = data.get('name')
+    command = data.get('command')
+    description = data.get('description', '')
+    
+    if not name or not command:
+        return jsonify({'error': 'Name and command are required'}), 400
+    
+    PLUGINS[name] = {
+        'command': command,
+        'description': description,
+        'created': time.time()
+    }
+    
+    return jsonify({'ok': True, 'message': f'Plugin "{name}" added'})
+
+
+@app.route('/api/plugins/<name>', methods=['DELETE'])
+def delete_plugin(name):
+    if name in PLUGINS:
+        del PLUGINS[name]
+        return jsonify({'ok': True, 'message': f'Plugin "{name}" deleted'})
+    return jsonify({'error': 'Plugin not found'}), 404
+
+
+@app.route('/api/plugins/<name>/execute', methods=['POST'])
+def execute_plugin(name):
+    if name not in PLUGINS:
+        return jsonify({'error': 'Plugin not found'}), 404
+    
+    data = request.json or {}
+    tid = data.get('tid')
+    args = data.get('args', '')
+    
+    if not tid or tid not in SESSIONS:
+        return jsonify({'error': 'Invalid session'}), 400
+    
+    plugin = PLUGINS[name]
+    command = plugin['command'].replace('$ARGS', args)
+    
+    try:
+        term = SESSIONS[tid]
+        os.write(term['fd'], (command + '\n').encode())
+        return jsonify({'ok': True, 'executed': command})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+# File sharing system
+@app.route('/api/share-file', methods=['POST'])
+def share_file():
+    data = request.json or {}
+    path = data.get('path')
+    
+    if not path or not os.path.exists(path):
+        return jsonify({'error': 'File not found'}), 404
+    
+    # Generate unique share ID
+    share_id = str(uuid.uuid4())[:8]
+    
+    try:
+        with open(path, 'rb') as f:
+            content = f.read()
+        
+        SHARED_FILES[share_id] = {
+            'path': path,
+            'content': content,
+            'created': time.time(),
+            'filename': os.path.basename(path)
+        }
+        
+        return jsonify({
+            'ok': True,
+            'share_id': share_id,
+            'url': f'/shared/{share_id}',
+            'filename': os.path.basename(path)
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/shared/<share_id>')
+def get_shared_file(share_id):
+    if share_id not in SHARED_FILES:
+        return 'File not found or expired', 404
+    
+    file_data = SHARED_FILES[share_id]
+    
+    # Auto-expire after 1 hour
+    if time.time() - file_data['created'] > 3600:
+        del SHARED_FILES[share_id]
+        return 'File expired', 410
+    
+    from flask import Response
+    return Response(
+        file_data['content'],
+        headers={
+            'Content-Disposition': f'attachment; filename={file_data["filename"]}',
+            'Content-Type': 'application/octet-stream'
+        }
+    )
+
+
+@app.route('/api/shared-files')
+def list_shared_files():
+    # Clean up expired files
+    current_time = time.time()
+    expired = [k for k, v in SHARED_FILES.items() if current_time - v['created'] > 3600]
+    for k in expired:
+        del SHARED_FILES[k]
+    
+    files = []
+    for share_id, data in SHARED_FILES.items():
+        files.append({
+            'id': share_id,
+            'filename': data['filename'],
+            'created': data['created'],
+            'url': f'/shared/{share_id}'
+        })
+    
+    return jsonify({'files': files})
 
 
 if __name__ == '__main__':
