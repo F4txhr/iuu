@@ -7,7 +7,63 @@ SESSIONS = {}
 SESS_LOCK = threading.Lock()
 
 # Plugin system
-PLUGINS = {}
+PLUGINS = {
+    # System utilities
+    'sysinfo': {
+        'command': 'uname -a && echo "---" && df -h && echo "---" && free -h && echo "---" && ps aux | head -10',
+        'description': 'Show system information (OS, disk, memory, processes)',
+        'created': time.time()
+    },
+    'weather': {
+        'command': 'curl -s wttr.in/$ARGS?format=3',
+        'description': 'Get weather info for a city (usage: weather Jakarta)',
+        'created': time.time()
+    },
+    'myip': {
+        'command': 'curl -s ifconfig.me && echo',
+        'description': 'Show your public IP address',
+        'created': time.time()
+    },
+    
+    # Development tools
+    'gitlog': {
+        'command': 'git log --oneline --graph --decorate -10 $ARGS',
+        'description': 'Show git log with graph (usage: gitlog or gitlog --all)',
+        'created': time.time()
+    },
+    'ports': {
+        'command': 'netstat -tulpn | grep LISTEN | head -10',
+        'description': 'Show listening ports',
+        'created': time.time()
+    },
+    'diskusage': {
+        'command': 'du -sh $ARGS | sort -hr | head -20',
+        'description': 'Show disk usage of directories (usage: diskusage /path/to/dir)',
+        'created': time.time()
+    },
+    
+    # Quick utilities
+    'timestamp': {
+        'command': 'date +"%Y-%m-%d %H:%M:%S" && date +%s',
+        'description': 'Show current timestamp in human readable and unix format',
+        'created': time.time()
+    },
+    'findfile': {
+        'command': 'find . -name "*$ARGS*" -type f 2>/dev/null | head -20',
+        'description': 'Find files by name pattern (usage: findfile .py)',
+        'created': time.time()
+    },
+    'backup': {
+        'command': 'tar -czf backup_$(date +%Y%m%d_%H%M%S).tar.gz $ARGS',
+        'description': 'Create timestamped backup archive (usage: backup /path/to/backup)',
+        'created': time.time()
+    },
+    'extract': {
+        'command': 'if [[ "$ARGS" == *.tar.gz ]]; then tar -xzf "$ARGS"; elif [[ "$ARGS" == *.zip ]]; then unzip "$ARGS"; else echo "Unsupported format"; fi',
+        'description': 'Extract archive files (supports .tar.gz and .zip)',
+        'created': time.time()
+    }
+}
 SHARED_FILES = {}  # For file sharing
 
 
@@ -277,6 +333,13 @@ def get_plugins():
     return jsonify({'plugins': list(PLUGINS.keys())})
 
 
+@app.route('/api/plugins/<name>', methods=['GET'])
+def get_plugin_detail(name):
+    if name in PLUGINS:
+        return jsonify(PLUGINS[name])
+    return jsonify({'error': 'Plugin not found'}), 404
+
+
 @app.route('/api/plugins', methods=['POST'])
 def add_plugin():
     data = request.json or {}
@@ -297,7 +360,7 @@ def add_plugin():
 
 
 @app.route('/api/plugins/<name>', methods=['DELETE'])
-def delete_plugin(name):
+def delete_plugin_endpoint(name):
     if name in PLUGINS:
         del PLUGINS[name]
         return jsonify({'ok': True, 'message': f'Plugin "{name}" deleted'})
@@ -404,4 +467,6 @@ def list_shared_files():
 
 if __name__ == '__main__':
     os.makedirs('static', exist_ok=True)
-    app.run(host='0.0.0.0', port=8080)
+    print("🚀 Starting web terminal at http://127.0.0.1:8080")
+    print("📝 For personal use only - accessible from this computer only")
+    app.run(host='127.0.0.1', port=8080, debug=False)

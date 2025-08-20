@@ -769,18 +769,39 @@
         return;
       }
       
+      // Get detailed plugin info
       for (const pluginName of data.plugins) {
-        const pluginDiv = document.createElement('div');
-        pluginDiv.className = 'plugin-item';
-        pluginDiv.innerHTML = `
-          <div class="plugin-name">${pluginName}</div>
-          <div class="plugin-actions">
-            <button onclick="executePlugin('${pluginName}')">Run</button>
-            <button onclick="executePluginWithArgs('${pluginName}')">Run with Args</button>
-            <button class="delete" onclick="deletePlugin('${pluginName}')">Delete</button>
-          </div>
-        `;
-        pluginList.appendChild(pluginDiv);
+        try {
+          const detailResponse = await fetch(`/api/plugins/${pluginName}`);
+          const pluginDetail = await detailResponse.json();
+          
+          const pluginDiv = document.createElement('div');
+          pluginDiv.className = 'plugin-item';
+          pluginDiv.innerHTML = `
+            <div class="plugin-name">${pluginName}</div>
+            ${pluginDetail.description ? `<div class="plugin-desc">${pluginDetail.description}</div>` : ''}
+            <div class="plugin-command">${pluginDetail.command || ''}</div>
+            <div class="plugin-actions">
+              <button onclick="executePlugin('${pluginName}')">Run</button>
+              <button onclick="executePluginWithArgs('${pluginName}')">Run with Args</button>
+              <button class="delete" onclick="deletePlugin('${pluginName}')">Delete</button>
+            </div>
+          `;
+          pluginList.appendChild(pluginDiv);
+        } catch (e) {
+          // Fallback for plugins without details
+          const pluginDiv = document.createElement('div');
+          pluginDiv.className = 'plugin-item';
+          pluginDiv.innerHTML = `
+            <div class="plugin-name">${pluginName}</div>
+            <div class="plugin-actions">
+              <button onclick="executePlugin('${pluginName}')">Run</button>
+              <button onclick="executePluginWithArgs('${pluginName}')">Run with Args</button>
+              <button class="delete" onclick="deletePlugin('${pluginName}')">Delete</button>
+            </div>
+          `;
+          pluginList.appendChild(pluginDiv);
+        }
       }
     } catch (error) {
       console.error('Failed to load plugins:', error);
