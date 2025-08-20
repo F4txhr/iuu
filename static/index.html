@@ -69,6 +69,20 @@
   .context-menu-item { padding:8px 16px; cursor:pointer; color:#eee; font-size:14px; }
   .context-menu-item:hover { background:#3a3f4a; }
   .context-menu-separator { height:1px; background:#555; margin:4px 0; }
+  
+  /* System Monitor */
+  #systemMonitor { position:fixed; top:10px; right:10px; width:280px; background:#1e1e1e; border:1px solid #333; border-radius:8px; padding:12px; z-index:20; display:none; font-size:12px; }
+  #systemMonitor h3 { margin:0 0 12px 0; color:#9cf; font-size:14px; }
+  .stat-row { display:flex; justify-content:space-between; margin:8px 0; }
+  .stat-label { color:#ccc; }
+  .stat-value { color:#9cf; font-weight:bold; }
+  .progress-bar { width:100%; height:6px; background:#333; border-radius:3px; margin:4px 0; overflow:hidden; }
+  .progress-fill { height:100%; background:linear-gradient(90deg, #4CAF50, #FFC107, #F44336); transition:width 0.3s; }
+  .progress-fill.cpu { background:#2196F3; }
+  .progress-fill.memory { background:#FF9800; }
+  .progress-fill.disk { background:#9C27B0; }
+  #systemMonitor .close-btn { position:absolute; top:8px; right:12px; cursor:pointer; color:#999; font-weight:bold; }
+  #systemMonitor .close-btn:hover { color:#fff; }
 </style>
 <div id="layout">
   <div id="sidebar">
@@ -99,6 +113,43 @@
   <button id="tab-next">▶</button>
 </div>
 <div id="statusbar"><span id="st-user">user@host</span><span id="st-shell">sh</span><span id="st-time">00:00:00</span><span id="st-spin" style="display:none">⏳</span><span id="st-file" style="margin-left:auto; color:#9cf;"></span></div>
+<div id="systemMonitor">
+  <span class="close-btn" onclick="toggleSystemMonitor()">×</span>
+  <h3>📊 System Monitor</h3>
+  <div class="stat-row">
+    <span class="stat-label">CPU:</span>
+    <span class="stat-value" id="cpu-percent">0%</span>
+  </div>
+  <div class="progress-bar">
+    <div class="progress-fill cpu" id="cpu-bar" style="width: 0%"></div>
+  </div>
+  
+  <div class="stat-row">
+    <span class="stat-label">Memory:</span>
+    <span class="stat-value" id="memory-usage">0 GB / 0 GB</span>
+  </div>
+  <div class="progress-bar">
+    <div class="progress-fill memory" id="memory-bar" style="width: 0%"></div>
+  </div>
+  
+  <div class="stat-row">
+    <span class="stat-label">Disk:</span>
+    <span class="stat-value" id="disk-usage">0 GB / 0 GB</span>
+  </div>
+  <div class="progress-bar">
+    <div class="progress-fill disk" id="disk-bar" style="width: 0%"></div>
+  </div>
+  
+  <div class="stat-row">
+    <span class="stat-label">Processes:</span>
+    <span class="stat-value" id="process-count">0</span>
+  </div>
+  
+  <div class="stat-row">
+    <span class="stat-label">Uptime:</span>
+    <span class="stat-value" id="uptime">0h</span>
+  </div>
+</div>
 <script src="./static/xterm.min.js"></script>
 <script src="./static/xterm-addon-fit.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.51.0/min/vs/loader.min.js"></script>
@@ -171,7 +222,8 @@
       {id:'btn-scroll', label:'ScrollLock: Off'}
     ]},{name:'View', buttons:[
       {id:'btn-split', label:'Split: Off'},
-      {id:'btn-log', label:'Log: Off'}
+      {id:'btn-log', label:'Log: Off'},
+      {id:'btn-monitor', label:'Monitor: Off'}
     ]},{name:'Edit', buttons:[
       {id:'btn-editor', label:'Editor: Off'},
       {id:'btn-save', label:'Save'}
@@ -196,6 +248,7 @@
     const scr=document.getElementById('btn-scroll'); if(scr) scr.onclick=()=>{ scrollLock=!scrollLock; scr.textContent = 'ScrollLock: ' + (scrollLock?'On':'Off'); };
     const splitBtn=document.getElementById('btn-split'); if(splitBtn) splitBtn.onclick=async ()=>{ const pane2=document.getElementById('pane2'); split=!split; splitBtn.textContent='Split: '+(split?'On':'Off'); if(split){ pane2.style.display='block'; if(!tid2){ await newTerm(2); poll(2); } } else { pane2.style.display='none'; } };
     const logBtn=document.getElementById('btn-log'); if(logBtn) logBtn.onclick=async ()=>{ logMode=!logMode; logBtn.textContent='Log: '+(logMode?'On':'Off'); if(logMode){ const p=prompt('Path file utk tail -f:'); if(!p){ logMode=false; logBtn.textContent='Log: Off'; return; } if(!tid2){ await newTerm(2); poll(2); split=true; document.getElementById('pane2').style.display='block'; if(splitBtn) splitBtn.textContent='Split: On'; } t2.t.clear(); await send(2, `tail -f "${p.replace(/\"/g,'\\\"')}"\n`); } else { if(tid2){ await send(2, '\x03'); } } };
+    const monitorBtn=document.getElementById('btn-monitor'); if(monitorBtn) monitorBtn.onclick=()=>{ toggleSystemMonitor(); monitorBtn.textContent='Monitor: '+(systemMonitorVisible?'On':'Off'); };
     const edBtn=document.getElementById('btn-editor'); if(edBtn) edBtn.onclick=()=>{ const on = document.getElementById('editorWrap').style.display!=='block'; showEditor(on); };
     const saveBtn=document.getElementById('btn-save'); if(saveBtn) saveBtn.onclick=async ()=>{ if(!currentFile||!editor) return; const data=editor.getValue(); const r=await fetch('/api/save-file',{ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ path:currentFile, data }) }); const j=await r.json(); if(!j.ok){ alert(j.error||'Gagal simpan'); } };
   }
@@ -570,6 +623,58 @@
   // Remove context menu on click outside
   document.addEventListener('click', removeContextMenu);
 
+  // System Monitor
+  let systemMonitorVisible = false;
+  let systemMonitorInterval = null;
+  
+  function toggleSystemMonitor() {
+    systemMonitorVisible = !systemMonitorVisible;
+    const monitor = document.getElementById('systemMonitor');
+    
+    if (systemMonitorVisible) {
+      monitor.style.display = 'block';
+      updateSystemStats();
+      systemMonitorInterval = setInterval(updateSystemStats, 3000); // Update every 3 seconds
+    } else {
+      monitor.style.display = 'none';
+      if (systemMonitorInterval) {
+        clearInterval(systemMonitorInterval);
+        systemMonitorInterval = null;
+      }
+    }
+  }
+  
+  async function updateSystemStats() {
+    try {
+      const response = await fetch('/api/system-stats');
+      const stats = await response.json();
+      
+      if (stats.error) {
+        console.error('System stats error:', stats.error);
+        return;
+      }
+      
+      // Update CPU
+      document.getElementById('cpu-percent').textContent = `${stats.cpu.percent}%`;
+      document.getElementById('cpu-bar').style.width = `${stats.cpu.percent}%`;
+      
+      // Update Memory
+      document.getElementById('memory-usage').textContent = `${stats.memory.used_gb} GB / ${stats.memory.total_gb} GB`;
+      document.getElementById('memory-bar').style.width = `${stats.memory.percent}%`;
+      
+      // Update Disk
+      document.getElementById('disk-usage').textContent = `${stats.disk.used_gb} GB / ${stats.disk.total_gb} GB`;
+      document.getElementById('disk-bar').style.width = `${stats.disk.percent}%`;
+      
+      // Update other stats
+      document.getElementById('process-count').textContent = stats.system.processes;
+      document.getElementById('uptime').textContent = `${stats.system.uptime}h`;
+      
+    } catch (error) {
+      console.error('Failed to fetch system stats:', error);
+    }
+  }
+
   // Term input with command history
   t1.t.onData(d => { 
     focusTarget='terminal1'; 
@@ -656,6 +761,13 @@
       e.preventDefault();
       const exBtn = document.getElementById('btn-explorer');
       if (exBtn) exBtn.click();
+    }
+    // F12 - Toggle system monitor
+    else if (e.key === 'F12') {
+      e.preventDefault();
+      toggleSystemMonitor();
+      const monitorBtn = document.getElementById('btn-monitor');
+      if (monitorBtn) monitorBtn.textContent = 'Monitor: ' + (systemMonitorVisible ? 'On' : 'Off');
     }
     // Ctrl+F - Find in editor
     else if (e.ctrlKey && e.key === 'f') {

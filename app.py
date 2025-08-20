@@ -1,5 +1,5 @@
 from flask import Flask, request, jsonify, send_from_directory
-import os, pty, select, threading, subprocess, signal, socket, getpass
+import os, pty, select, threading, subprocess, signal, socket, getpass, psutil, time
 
 app = Flask(__name__, static_url_path='/static')
 
@@ -198,6 +198,74 @@ def save_file():
         return jsonify({'ok':True})
     except Exception as e:
         return jsonify({'error': str(e)}), 400
+
+
+@app.route('/api/system-stats')
+def system_stats():
+    try:
+        # CPU usage
+        cpu_percent = psutil.cpu_percent(interval=1)
+        cpu_count = psutil.cpu_count()
+        
+        # Memory usage
+        memory = psutil.virtual_memory()
+        memory_total = memory.total
+        memory_used = memory.used
+        memory_percent = memory.percent
+        
+        # Disk usage
+        disk = psutil.disk_usage('/')
+        disk_total = disk.total
+        disk_used = disk.used
+        disk_percent = (disk_used / disk_total) * 100
+        
+        # Network I/O
+        net_io = psutil.net_io_counters()
+        
+        # Process count
+        process_count = len(psutil.pids())
+        
+        # Load average (Unix only)
+        try:
+            load_avg = os.getloadavg()
+        except:
+            load_avg = [0, 0, 0]
+        
+        # Boot time
+        boot_time = psutil.boot_time()
+        uptime = time.time() - boot_time
+        
+        return jsonify({
+            'cpu': {
+                'percent': round(cpu_percent, 1),
+                'count': cpu_count
+            },
+            'memory': {
+                'total': memory_total,
+                'used': memory_used,
+                'percent': round(memory_percent, 1),
+                'total_gb': round(memory_total / (1024**3), 2),
+                'used_gb': round(memory_used / (1024**3), 2)
+            },
+            'disk': {
+                'total': disk_total,
+                'used': disk_used,
+                'percent': round(disk_percent, 1),
+                'total_gb': round(disk_total / (1024**3), 2),
+                'used_gb': round(disk_used / (1024**3), 2)
+            },
+            'network': {
+                'bytes_sent': net_io.bytes_sent,
+                'bytes_recv': net_io.bytes_recv
+            },
+            'system': {
+                'processes': process_count,
+                'load_avg': [round(x, 2) for x in load_avg],
+                'uptime': round(uptime / 3600, 1)  # hours
+            }
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 
 if __name__ == '__main__':
