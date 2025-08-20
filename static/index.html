@@ -14,18 +14,50 @@
   .termPane { flex:1; position:relative; border:1px solid #333; border-radius:6px; overflow:hidden; }
   .termPane .term { position:absolute; left:0; top:0; right:0; bottom:0; padding:6px; }
   #bottombar { position:fixed; left:0; right:0; bottom:24px; height:56px; background:#1c1f26; border-top:1px solid #333; display:flex; align-items:center; gap:8px; padding:8px; z-index:15; }
-  #bottombar button { background:#2a2f3a; color:#fff; border:none; padding:6px 10px; border-radius:6px; cursor:pointer; }
+  #bottombar button { background:#2a2f3a; color:#fff; border:none; padding:6px 10px; border-radius:6px; cursor:pointer; touch-action:manipulation; }
   #tab-prev, #tab-next { min-width:44px; }
   #tab-label { min-width:60px; text-align:center; color:#9aa; }
   #tab-content { display:flex; gap:8px; overflow:hidden; white-space:nowrap; }
   #statusbar { position:fixed; left:0; right:0; bottom:0; height:24px; background:#0d1014; border-top:1px solid #333; display:flex; align-items:center; gap:12px; padding:0 8px; font-size:12px; color:#9aa; z-index:16; }
   #path { display:flex; align-items:center; gap:8px; padding:8px; border-bottom:1px solid #333; color:#9cf; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-  #path .back { background:#2a2f3a; color:#fff; border:none; padding:2px 8px; border-radius:4px; cursor:pointer; }
+  #path .back { background:#2a2f3a; color:#fff; border:none; padding:2px 8px; border-radius:4px; cursor:pointer; touch-action:manipulation; }
   #list { list-style:none; margin:0; padding:0; outline:none; }
-  #list li { padding:6px 10px; cursor:pointer; }
+  #list li { padding:12px 10px; cursor:pointer; border-bottom:1px solid #222; touch-action:manipulation; }
   #list li.sel { background:#1f2630; }
   #list li .dir { color:#7ad; }
   #list li .file { color:#eee; }
+  
+  /* Mobile Responsive */
+  @media (max-width: 768px) {
+    #layout { flex-direction:column; }
+    #sidebar { width:100%; height:40%; border-right:none; border-bottom:1px solid #333; }
+    #main { height:60%; }
+    #bottombar { height:64px; padding:12px 8px; }
+    #bottombar button { padding:8px 12px; min-height:44px; font-size:14px; }
+    #tab-prev, #tab-next { min-width:48px; }
+    #list li { padding:16px 12px; font-size:16px; }
+    #path { padding:12px; }
+    .termPane .term { padding:8px; }
+    #termWrap { padding:8px; gap:8px; }
+  }
+  
+  @media (max-width: 480px) {
+    #sidebar { height:35%; }
+    #main { height:65%; }
+    #bottombar { gap:4px; padding:8px 4px; }
+    #bottombar button { padding:6px 8px; font-size:12px; }
+    #tab-content { gap:4px; }
+    #statusbar { font-size:11px; gap:8px; }
+    #list li { padding:14px 8px; }
+  }
+  
+  /* Touch improvements */
+  .termPane .term { -webkit-overflow-scrolling: touch; }
+  #list { -webkit-overflow-scrolling: touch; }
+  #sidebar { -webkit-overflow-scrolling: touch; }
+  
+  /* Prevent zoom on input focus */
+  input, button, select, textarea { font-size: 16px; }
 </style>
 <div id="layout">
   <div id="sidebar">
@@ -160,14 +192,134 @@
   document.getElementById('clear').onclick = ()=>{ if(focusTarget==='terminal2' && tid2) fetch('/api/term/clear',{method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({tid:tid2})}); else if(tid1) fetch('/api/term/clear',{method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({tid:tid1})}); };
 
   // Editor (Monaco)
-  let editor=null, monacoLoaded=false, currentFile=null;
+  let editor=null, monacoLoaded=false, currentFile=null, autoSaveTimer=null, hasUnsavedChanges=false;
   function showEditor(on){ document.getElementById('editorWrap').style.display = on?'block':'none'; const edBtn=document.getElementById('btn-editor'); if(edBtn) edBtn.textContent = 'Editor: ' + (on?'On':'Off'); const saveBtn=document.getElementById('btn-save'); if(saveBtn) saveBtn.style.display = on?'inline-block':'none'; }
+  
+  // Auto-save functionality
+  async function autoSave() {
+    if (!editor || !currentFile || !hasUnsavedChanges) return;
+    try {
+      const data = editor.getValue();
+      const r = await fetch('/api/save-file', { 
+        method: 'POST', 
+        headers: {'Content-Type': 'application/json'}, 
+        body: JSON.stringify({ path: currentFile, data }) 
+      });
+      const j = await r.json();
+      if (j.ok) {
+        hasUnsavedChanges = false;
+        // Update status bar to show auto-saved
+        document.getElementById('st-file').textContent = currentFile + ' ✓';
+        setTimeout(() => {
+          if (document.getElementById('st-file').textContent.endsWith(' ✓')) {
+            document.getElementById('st-file').textContent = currentFile;
+          }
+        }, 2000);
+      }
+    } catch(e) {
+      console.log('Auto-save failed:', e);
+    }
+  }
+  
+  function scheduleAutoSave() {
+    if (autoSaveTimer) clearTimeout(autoSaveTimer);
+    autoSaveTimer = setTimeout(autoSave, 3000); // Auto-save after 3 seconds of inactivity
+  }
   function ensureMonaco(cb){ if(monacoLoaded){ cb(); return; } require.config({ paths: { 'vs': 'https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.51.0/min/vs' } }); require(['vs/editor/editor.main'], ()=>{ monacoLoaded=true; cb(); }); }
-  async function openInEditor(path){ try{ const r=await fetch('/api/read-file?path='+encodeURIComponent(path)); const j=await r.json(); if(!j.ok){ alert(j.error||'Gagal baca file'); return; } ensureMonaco(()=>{ showEditor(true); currentFile=path; document.getElementById('st-file').textContent=path; if(!editor){ editor = monaco.editor.create(document.getElementById('editor'), { value:j.data||'', language:'plaintext', theme:'vs-dark', automaticLayout:true, fontSize:14 }); } else { editor.setValue(j.data||''); } }); }catch(e){ alert('Gagal membuka: '+e); } }
+  // Get language from file extension
+  function getLanguageFromPath(path) {
+    const ext = path.split('.').pop().toLowerCase();
+    const langMap = {
+      'js': 'javascript', 'jsx': 'javascript', 'ts': 'typescript', 'tsx': 'typescript',
+      'py': 'python', 'pyw': 'python', 'html': 'html', 'htm': 'html', 'xml': 'xml',
+      'css': 'css', 'scss': 'scss', 'sass': 'sass', 'less': 'less',
+      'json': 'json', 'md': 'markdown', 'markdown': 'markdown',
+      'sh': 'shell', 'bash': 'shell', 'zsh': 'shell', 'fish': 'shell',
+      'php': 'php', 'rb': 'ruby', 'go': 'go', 'rs': 'rust',
+      'java': 'java', 'c': 'c', 'cpp': 'cpp', 'cc': 'cpp', 'cxx': 'cpp',
+      'h': 'c', 'hpp': 'cpp', 'cs': 'csharp', 'sql': 'sql',
+      'yaml': 'yaml', 'yml': 'yaml', 'toml': 'toml', 'ini': 'ini',
+      'dockerfile': 'dockerfile', 'vue': 'html', 'svelte': 'html'
+    };
+    return langMap[ext] || 'plaintext';
+  }
+
+  async function openInEditor(path){ try{ const r=await fetch('/api/read-file?path='+encodeURIComponent(path)); const j=await r.json(); if(!j.ok){ alert(j.error||'Gagal baca file'); return; } ensureMonaco(()=>{ showEditor(true); currentFile=path; hasUnsavedChanges=false; document.getElementById('st-file').textContent=path; const language = getLanguageFromPath(path); if(!editor){ editor = monaco.editor.create(document.getElementById('editor'), { value:j.data||'', language: language, theme:'vs-dark', automaticLayout:true, fontSize:14, wordWrap: 'on', minimap: { enabled: false }, scrollBeyondLastLine: false }); // Add auto-save listener; editor.onDidChangeModelContent(() => { hasUnsavedChanges = true; scheduleAutoSave(); }); } else { editor.setValue(j.data||''); monaco.editor.setModelLanguage(editor.getModel(), language); hasUnsavedChanges = false; } }); }catch(e){ alert('Gagal membuka: '+e); } }
 
   // Term input
   t1.t.onData(d => { focusTarget='terminal1'; send(1,d); });
   t2.t.onData(d => { focusTarget='terminal2'; send(2,d); });
+
+  // Global Keyboard Shortcuts
+  document.addEventListener('keydown', (e) => {
+    // Ctrl+` - Toggle focus between terminal and explorer
+    if (e.ctrlKey && e.key === '`') {
+      e.preventDefault();
+      if (focusTarget === 'explorer') {
+        t1.t.focus();
+        setFocus('terminal1');
+      } else {
+        setFocus('explorer');
+      }
+    }
+    // Ctrl+E - Toggle editor
+    else if (e.ctrlKey && e.key === 'e') {
+      e.preventDefault();
+      const edBtn = document.getElementById('btn-editor');
+      if (edBtn) edBtn.click();
+    }
+    // Ctrl+T - New terminal (split)
+    else if (e.ctrlKey && e.key === 't') {
+      e.preventDefault();
+      const splitBtn = document.getElementById('btn-split');
+      if (splitBtn) splitBtn.click();
+    }
+    // Ctrl+S - Save file (when editor is active)
+    else if (e.ctrlKey && e.key === 's') {
+      if (editor && currentFile) {
+        e.preventDefault();
+        const saveBtn = document.getElementById('btn-save');
+        if (saveBtn) saveBtn.click();
+      }
+    }
+    // Ctrl+Shift+C - Clear terminal
+    else if (e.ctrlKey && e.shiftKey && e.key === 'C') {
+      e.preventDefault();
+      document.getElementById('clear').click();
+    }
+    // Ctrl+H - Go home
+    else if (e.ctrlKey && e.key === 'h') {
+      e.preventDefault();
+      const homeBtn = document.getElementById('act-home');
+      if (homeBtn) homeBtn.click();
+    }
+    // F11 - Toggle explorer visibility
+    else if (e.key === 'F11') {
+      e.preventDefault();
+      const exBtn = document.getElementById('btn-explorer');
+      if (exBtn) exBtn.click();
+    }
+    // Ctrl+F - Find in editor
+    else if (e.ctrlKey && e.key === 'f') {
+      if (editor && currentFile) {
+        e.preventDefault();
+        editor.getAction('actions.find').run();
+      }
+    }
+    // Ctrl+H - Replace in editor  
+    else if (e.ctrlKey && e.key === 'h') {
+      if (editor && currentFile) {
+        e.preventDefault();
+        editor.getAction('editor.action.startFindReplaceAction').run();
+      }
+    }
+    // Escape - Focus terminal
+    else if (e.key === 'Escape' && focusTarget !== 'terminal1' && focusTarget !== 'terminal2') {
+      e.preventDefault();
+      t1.t.focus();
+      setFocus('terminal1');
+    }
+  });
 
   // Navigation controls (duplicate code removed)
 
